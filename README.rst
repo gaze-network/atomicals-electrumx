@@ -11,7 +11,7 @@ ElectrumX - Reimplementation of electrum-server
   :Language: Python (>= 3.8)
   :Original Author: Neil Booth
 
-This project is a fork of `kyuupichan/electrumx <https://github.com/kyuupichan/electrumx>`_.
+This project is a fork of `atomicals/atomicals-electrumx <https://github.com/atomicals/atomicals-electrumx>` and `kyuupichan/electrumx <https://github.com/kyuupichan/electrumx>`_.
 The original author dropped support for Bitcoin, which we intend to keep.
 
 ElectrumX allows users to run their own Electrum server. It connects to your
