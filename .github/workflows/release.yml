@@ -13,7 +13,7 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Get tag value
         id: tag
@@ -33,3 +33,24 @@ jobs:
       dockerfile: Dockerfile
       image-repo: ghcr.io/gaze-network/atomicals-electrumx
       image-tag: ${{ needs.prepare.outputs.tag }}
+
+  release-note:
+    name: Draft release note
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare note
+        run: git log $(git describe HEAD~ --tags --abbrev=0)..HEAD --pretty='format:* %h %s%n  * %an <%ae>' --no-merges >> ".github/RELEASE-TEMPLATE.md"
+
+      - name: Create draft release note
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: ".github/RELEASE-TEMPLATE.md"
+          draft: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
