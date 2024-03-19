@@ -28,8 +28,6 @@ ENV DAEMON_URL="http://username:password@hostname:port"
 ENV SERVICES="tcp://0.0.0.0:50010,ws://:50020,rpc://:8000,http://:80"
 ENV ALLOW_ROOT=true
 ENV CACHE_MB=2000
-# set this to true to enable reporting of indexer stats to gaze network, with additional envs. See installation guide for more details.
-ENV INDEXER_REPORTING_ENABLED=false
 
 VOLUME /var/lib/electrumx/db
 
