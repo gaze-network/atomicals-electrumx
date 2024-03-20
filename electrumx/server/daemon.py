@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Type
 
 import aiohttp
 from aiorpcx import JSONRPC
+from aiolimiter import AsyncLimiter
 
 from electrumx.lib.hash import hash_to_hex_str, hex_str_to_hash
 from electrumx.lib.tx import DeserializerDecred
@@ -39,6 +40,8 @@ class ServiceRefusedError(Exception):
     '''Internal - when the daemon doesn't provide a JSON response, only an HTTP error, for
     some reason.'''
 
+class DaemonRateLimitError(Exception):
+    '''Raised when the daemon rate limit is exceeded. The daemon should retry after some time.'''
 
 class Daemon:
     '''Handles connections to a daemon at the given URL.'''
@@ -54,6 +57,8 @@ class Daemon:
             max_workqueue=10,
             init_retry=0.25,
             max_retry=4.0,
+            max_rate=None,
+            rate_period_sec=None,
     ):
         self.coin = coin
         self.logger = class_logger(__name__, self.__class__.__name__)
@@ -68,6 +73,10 @@ class Daemon:
         self._height = None
         self.available_rpcs = {}
         self.session = None
+        self.limiter = None
+        if max_rate and rate_period_sec:
+            self.limiter = AsyncLimiter(max_rate, rate_period_sec)
+            self.logger.info(f'daemon rate limiting set to {max_rate} per {rate_period_sec} seconds')
 
         self._networkinfo_cache = (None, 0)
         self._networkinfo_lock = asyncio.Lock()
@@ -114,13 +123,21 @@ class Daemon:
             return True
         return False
 
-    async def _send_data(self, data):
+    async def _send_data(self, data, request_count: int):
+        if self.limiter:
+            await self.limiter.acquire(request_count)
         async with self.workqueue_semaphore:
             if self.session:
                 async with self.session.post(self.current_url(), data=data) as resp:
+                    if resp.status == 429:
+                        raise DaemonRateLimitError
                     kind = resp.headers.get('Content-Type', None)
                     if kind == 'application/json':
-                        return await resp.json(loads=json_deserialize)
+                        resp_body = await resp.json(loads=json_deserialize)
+                        # temporary rate limit workaround for quicknode.com
+                        if type(resp_body) == list and any("request limit reached - reduce calls per second or upgrade your account at quicknode.com" in item.get('message', "") for item in resp_body):
+                            raise DaemonRateLimitError
+                        return resp_body
                     text = await resp.text()
                     text = text.strip() or resp.reason
                     raise ServiceRefusedError(text)
@@ -146,36 +163,52 @@ class Daemon:
         last_error_log = 0
         data = json_serialize(payload)
         retry = self.init_retry
+        max_retry_count = 5
+        retry_count = 0
         while True:
             try:
-                result = await self._send_data(data)
+                result = await self._send_data(data, len(payload) if type(payload) == list else 1)
                 result = processor(result)
                 if on_good_message:
                     self.logger.info(on_good_message)
                 return result
             except asyncio.TimeoutError:
                 log_error('timeout error')
+                retry_count += 1
             except aiohttp.ServerDisconnectedError:
                 log_error('disconnected')
                 on_good_message = 'connection restored'
+                retry_count += 1
             except ConnectionResetError:
                 log_error('connection reset')
                 on_good_message = 'connection restored'
+                retry_count += 1
             except aiohttp.ClientConnectionError:
                 log_error('connection problem - check your daemon is running')
                 on_good_message = 'connection restored'
+                retry_count += 1
             except aiohttp.ClientError as e:
                 log_error(f'daemon error: {e}')
                 on_good_message = 'running normally'
+                retry_count += 1
             except ServiceRefusedError as e:
                 log_error(f'daemon service refused: {e}')
                 on_good_message = 'running normally'
+                retry_count += 1
             except WarmingUpError:
                 log_error('starting up checking blocks')
                 on_good_message = 'running normally'
+                retry_count += 1
+            except DaemonRateLimitError:
+                log_error('rate limit exceeded')
+                on_good_message = 'running normally'
+                # don't increment retry_count, we want to keep retrying indefinitely
 
             await asyncio.sleep(retry)
             retry = max(min(self.max_retry, retry * 2), self.init_retry)
+
+            if retry_count > max_retry_count:
+                raise DaemonError('max retry count exceeded')
 
     async def _send_single(self, method, params=None):
         '''Send a single request to the daemon.'''
@@ -209,6 +242,13 @@ class Daemon:
         payload = [{'method': method, 'params': p, 'id': next(self.id_counter)}
                    for p in params_iterable]
         if payload:
+            if self.limiter:
+                # chunk payload to half the size of the limiter
+                chunk_size = min(self.limiter.max_rate // 4, 1)
+                payload_chunks = [payload[i:i + chunk_size] for i in range(0, len(payload), chunk_size)]
+                results = await asyncio.gather(*[self._send(chunk, processor) for chunk in payload_chunks])
+                return list(itertools.chain(*results))
+
             return await self._send(payload, processor)
         return []
 

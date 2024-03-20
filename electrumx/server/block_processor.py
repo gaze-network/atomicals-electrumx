@@ -14,6 +14,7 @@ import time
 from typing import Sequence, Tuple, List, Callable, Optional, TYPE_CHECKING, Type
 
 from aiorpcx import run_in_thread, CancelledError
+import requests
 
 import electrumx
 from electrumx.server.daemon import DaemonError, Daemon
@@ -75,6 +76,8 @@ from electrumx.lib.util_atomicals import (
 from electrumx.lib.atomicals_blueprint_builder import AtomicalsTransferBlueprintBuilder
 
 import copy
+
+from electrumx.server.gaze_network_report_client import GazeNetworkReportClient
 
 if TYPE_CHECKING:
     from electrumx.lib.coins import Coin
@@ -242,6 +245,9 @@ class BlockProcessor:
             daemon, env.coin, self.blocks_event,
             polling_delay_secs=env.daemon_poll_interval_blocks_msec/1000,
         )
+        if self.env.gaze_network_report:
+            self.gaze_network_report_client = GazeNetworkReportClient(env)
+            self.gaze_network_report_client.submit_node_report('arc20')
         self.logger = class_logger(__name__, self.__class__.__name__)
 
         # Meta
@@ -2794,8 +2800,8 @@ class BlockProcessor:
         # Use the block hash as the starting point
         concatenation_of_tx_hashes_with_valid_atomical_operation = []
         prev_atomicals_block_hash = b''
+        block_header_hash = self.coin.header_hash(header)
         if self.is_atomicals_activated(height):
-            block_header_hash = self.coin.header_hash(header)
             if height == self.coin.ATOMICALS_ACTIVATION_HEIGHT:
                 self.logger.info(f'Atomicals Genesis Block Hash: {hash_to_hex_str(block_header_hash)}')
                 concatenation_of_tx_hashes_with_valid_atomical_operation.append(block_header_hash)
@@ -2989,11 +2995,20 @@ class BlockProcessor:
             
         if self.is_atomicals_activated(height):
             # Save the atomicals hash for the current block
-            current_height_atomicals_block_hash = self.coin.header_hash(b''.join(concatenation_of_tx_hashes_with_valid_atomical_operation))
-            put_general_data(b'tt' + pack_le_uint32(height), current_height_atomicals_block_hash)
-            self.logger.info(f'height={height}, atomicals_block_hash={hash_to_hex_str(current_height_atomicals_block_hash)}')   
+            current_atomicals_block_hash = self.coin.header_hash(b''.join(concatenation_of_tx_hashes_with_valid_atomical_operation[1:]))
+            cumulative_atomicals_block_hash = self.coin.header_hash(b''.join(concatenation_of_tx_hashes_with_valid_atomical_operation))
+            put_general_data(b'ttb' + pack_le_uint32(height), current_atomicals_block_hash)
+            put_general_data(b'tt' + pack_le_uint32(height), cumulative_atomicals_block_hash)
+            self.logger.info(f'height={height}, atomicals_block_hash={hash_to_hex_str(current_atomicals_block_hash)}, cumulative_atomicals_block_hash={hash_to_hex_str(cumulative_atomicals_block_hash)}')
+            self.submit_block_report(height, block_header_hash, current_atomicals_block_hash, cumulative_atomicals_block_hash)
        
         return undo_info, atomicals_undo_info
+
+    def submit_block_report(self, height: int, block_hash: bytes, block_event_hash: bytes, cumulative_block_event_hash: bytes):
+        # skip if the indexer report client is not enabled
+        if not self.gaze_network_report_client:
+            return
+        self.gaze_network_report_client.submit_block_report('arc20', height, block_hash, block_event_hash, cumulative_block_event_hash)
     
     # Sanity safety check method to call at end of block processing to ensure no dft token inflation
     def validate_no_dft_inflation(self, atomical_id_map, height):

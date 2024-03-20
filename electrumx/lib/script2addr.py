@@ -4,7 +4,8 @@ from typing import Optional, Callable, Union
 import hashlib
 
 from electrumx.lib import segwit_addr
-from electrumx.lib.script import OpCodes
+from electrumx.lib.hash import Base58
+from electrumx.lib.script import OpCodes, ScriptPubKey
 
 
 class MalformedBitcoinScript(Exception):
@@ -292,4 +293,33 @@ def get_address_from_output_script(_bytes: bytes) -> Optional[str]:
         if match_script_against_template(decoded, match):
             return hash_to_segwit_addr(decoded[1][1], witver=witver)
 
+    return None
+
+def get_script_from_address(address: str) -> Optional[bytes]:
+    # segwit/taproot
+    if address.startswith(SEGWIT_HRP):
+        witver, witprog = segwit_addr.decode(SEGWIT_HRP, address)
+        script = segwit_addr.segwit_scriptpubkey(witver, witprog)
+        return script
+
+    # pay-to-public-key
+	# Serialized public keys are either 65 bytes (130 hex chars) if
+	# uncompressed/hybrid or 33 bytes (66 hex chars) if compressed.
+    if len(address) == 130 or len(address) == 66:
+        # TODO: not supporting P2PK for now, since get_address_from_output_script() does not support it
+        return None
+
+    # pay-to-public-key-hash/pay-to-script-hash
+    raw = Base58.decode_check(address)
+    # Require version byte(s) plus hash160.
+    P2PKH_VERBYTE = bytes.fromhex("00")
+    P2SH_VERBYTES = bytes.fromhex("05")
+    verbyte = -1
+    verlen = len(raw) - 20
+    if verlen > 0:
+        verbyte, hash160 = raw[:verlen], raw[verlen:]
+    if verbyte == P2PKH_VERBYTE:
+        return ScriptPubKey.P2PKH_script(hash160)
+    if verbyte == P2SH_VERBYTES:
+        return ScriptPubKey.P2SH_script(hash160)
     return None

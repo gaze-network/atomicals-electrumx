@@ -97,7 +97,7 @@ class Controller(ServerBase):
         Daemon = env.coin.DAEMON
         BlockProcessor = env.coin.BLOCK_PROCESSOR
 
-        async with Daemon(env.coin, env.daemon_url) as daemon:
+        async with Daemon(env.coin, env.daemon_url, max_rate=self.env.daemon_rate_limit_max_rate, rate_period_sec=self.env.daemon_rate_limit_period_sec) as daemon:
             db = DB(env)
             bp = BlockProcessor(env, db, daemon, notifications)
 
@@ -129,7 +129,10 @@ class Controller(ServerBase):
             async def wait_for_catchup():
                 await caught_up_event.wait()
                 await group.spawn(db.populate_header_merkle_cache())
-                await group.spawn(mempool.keep_synchronized(mempool_event))
+                if not env.debug_skip_await_mempool_sync_on_startup:
+                    await group.spawn(mempool.keep_synchronized(mempool_event))
+                else:
+                    mempool_event.set()
 
             async with OldTaskGroup() as group:
                 await group.spawn(session_mgr.serve(notifications, mempool_event))

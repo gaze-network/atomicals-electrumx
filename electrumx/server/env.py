@@ -8,6 +8,7 @@
 '''Class for handling environment configuration and defaults.'''
 
 
+from dataclasses import dataclass
 import re
 from ipaddress import IPv4Address, IPv6Address
 from typing import Type
@@ -15,7 +16,10 @@ from typing import Type
 from aiorpcx import Service, ServicePart
 from electrumx.lib.coins import Coin
 from electrumx.lib.env_base import EnvBase
+import sys
 
+def is_test_environment():
+    return "pytest" in sys.modules
 
 class ServiceError(Exception):
     pass
@@ -45,6 +49,8 @@ class Env(EnvBase):
 
         self.db_dir = self.required('DB_DIRECTORY')
         self.daemon_url = self.required('DAEMON_URL')
+        self.daemon_rate_limit_max_rate = self.integer('DAEMON_RATE_LIMIT_MAX_RATE', None)
+        self.daemon_rate_limit_period_sec = self.integer('DAEMON_RATE_LIMIT_PERIOD_SEC', None)
         if coin is not None:
             assert issubclass(coin, Coin)
             self.coin = coin
@@ -95,6 +101,9 @@ class Env(EnvBase):
         self.session_group_by_subnet_ipv6 = self.integer('SESSION_GROUP_BY_SUBNET_IPV6', 48)
         self._check_and_fix_cost_limits()
         self.enable_rate_limit = self.boolean('ENABLE_RATE_LIMIT', True)
+
+        # Indexer reporting system
+        self.gaze_network_report = self.set_gaze_network_report_config()
         
         # Services last - uses some env vars above
 
@@ -103,6 +112,9 @@ class Env(EnvBase):
             self.ssl_certfile = self.required('SSL_CERTFILE')
             self.ssl_keyfile = self.required('SSL_KEYFILE')
         self.report_services = self.services_to_report()
+
+        # debug
+        self.debug_skip_await_mempool_sync_on_startup = self.boolean('DEBUG_SKIP_AWAIT_MEMPOOL_SYNC_ON_STARTUP', False)
 
     def sane_max_sessions(self):
         '''Return the maximum number of sessions to permit.  Normally this
@@ -191,6 +203,19 @@ class Env(EnvBase):
 
         return services
 
+    def set_gaze_network_report_config(self):
+        gaze_network_report_enabled = self.boolean('GAZE_NETWORK_REPORTING_ENABLED', False if is_test_environment() else True)
+        if not gaze_network_report_enabled:
+            return None
+        
+        gaze_network_report_url = self.default('GAZE_NETWORK_REPORTING_URL', 'https://indexer.api.gaze.network')
+        gaze_network_report_name = self.required('GAZE_NETWORK_REPORTING_NAME')
+        gaze_network_report_website_url = self.default('GAZE_NETWORK_REPORTING_WEBSITE_URL', None)
+        gaze_network_report_indexer_api_url = self.default('GAZE_NETWORK_REPORTING_INDEXER_API_URL', None)
+
+        return GazeNetworkReportConfig(gaze_network_report_url, gaze_network_report_name, gaze_network_report_website_url, gaze_network_report_indexer_api_url)
+
+
     def peer_discovery_enum(self):
         pd = self.default('PEER_DISCOVERY', 'on').strip().lower()
         if pd in ('off', ''):
@@ -199,3 +224,10 @@ class Env(EnvBase):
             return self.PD_SELF
         else:
             return self.PD_ON
+
+@dataclass
+class GazeNetworkReportConfig:
+    url: str
+    name: str
+    website_url: 'str | None'
+    indexer_api_url: 'str | None'

@@ -222,7 +222,11 @@ class DB:
         # ---
         # Key: b'tt' + height
         # Value: atomical header
-        # "maps block height to an atomical header"
+        # "maps block height to an cumulative atomical header hash"
+        # ---
+        # Key: b'ttb' + height
+        # Value: atomical header
+        # "maps block height to an that block's atomical header hash"
         # ---
         # Key: b'rtx' + txid
         # Value: raw_tx
@@ -1439,7 +1443,6 @@ class DB:
                     atomical_output_script_value = self.utxo_db.get(atomical_output_script_key)
                     location_script = atomical_output_script_value
                     location_value, = unpack_le_uint64(atomical_active_location_value[HASHX_LEN + SCRIPTHASH_LEN : HASHX_LEN + SCRIPTHASH_LEN + 8])
-                    
                     script = location_script.hex()
                     if holder_dict.get(script, None):
                         holder_dict[script] += location_value
