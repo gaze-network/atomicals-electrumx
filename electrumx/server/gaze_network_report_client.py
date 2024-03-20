@@ -30,7 +30,7 @@ class GazeNetworkReportClient:
     def submit_block_report(self, type: str, height: int, block_hash: bytes, event_hash: bytes, cumulative_event_hash: bytes):
         data = {
             'type': type,
-            'clientVersion': electrumx.gaze_client_version,
+            'clientVersion': electrumx.version,
             'dbVersion': electrumx.gaze_db_version,
             'network': self.env.coin.NET,
             'blockHeight': height,
