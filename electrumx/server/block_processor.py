@@ -77,7 +77,7 @@ from electrumx.lib.atomicals_blueprint_builder import AtomicalsTransferBlueprint
 
 import copy
 
-from electrumx.server.indexer_report_client import IndexerReportClient
+from electrumx.server.gaze_network_report_client import GazeNetworkReportClient
 
 if TYPE_CHECKING:
     from electrumx.lib.coins import Coin
@@ -245,9 +245,9 @@ class BlockProcessor:
             daemon, env.coin, self.blocks_event,
             polling_delay_secs=env.daemon_poll_interval_blocks_msec/1000,
         )
-        if self.env.indexer_report:
-            self.indexer_report_client = IndexerReportClient(env)
-            self.indexer_report_client.submit_node_report('arc20')
+        if self.env.gaze_network_report:
+            self.gaze_network_report_client = GazeNetworkReportClient(env)
+            self.gaze_network_report_client.submit_node_report('arc20')
         self.logger = class_logger(__name__, self.__class__.__name__)
 
         # Meta
@@ -3006,10 +3006,9 @@ class BlockProcessor:
 
     def submit_block_report(self, height: int, block_hash: bytes, block_event_hash: bytes, cumulative_block_event_hash: bytes):
         # skip if the indexer report client is not enabled
-        if not self.indexer_report_client:
+        if not self.gaze_network_report_client:
             return
-        db_version = 1
-        self.indexer_report_client.submit_block_report(db_version, 'arc20', height, block_hash, block_event_hash, cumulative_block_event_hash)
+        self.gaze_network_report_client.submit_block_report('arc20', height, block_hash, block_event_hash, cumulative_block_event_hash)
     
     # Sanity safety check method to call at end of block processing to ensure no dft token inflation
     def validate_no_dft_inflation(self, atomical_id_map, height):

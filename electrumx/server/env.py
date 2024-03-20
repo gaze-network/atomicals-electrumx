@@ -103,7 +103,7 @@ class Env(EnvBase):
         self.enable_rate_limit = self.boolean('ENABLE_RATE_LIMIT', True)
 
         # Indexer reporting system
-        self.indexer_report = self.set_indexer_report_config()
+        self.gaze_network_report = self.set_gaze_network_report_config()
         
         # Services last - uses some env vars above
 
@@ -203,17 +203,17 @@ class Env(EnvBase):
 
         return services
 
-    def set_indexer_report_config(self):
-        indexer_report_enabled = self.boolean('INDEXER_REPORTING_ENABLED', False if is_test_environment() else True)
-        if not indexer_report_enabled:
+    def set_gaze_network_report_config(self):
+        gaze_network_report_enabled = self.boolean('GAZE_NETWORK_REPORTING_ENABLED', False if is_test_environment() else True)
+        if not gaze_network_report_enabled:
             return None
         
-        indexer_report_url = self.default('INDEXER_REPORTING_URL', 'https://indexer.api.gaze.network')
-        indexer_report_name = self.required('INDEXER_REPORTING_NAME')
-        indexer_report_website_url = self.default('INDEXER_REPORTING_WEBSITE_URL', None)
-        indexer_report_indexer_api_url = self.default('INDEXER_REPORTING_INDEXER_API_URL', None)
+        gaze_network_report_url = self.default('GAZE_NETWORK_REPORTING_URL', 'https://indexer.api.gaze.network')
+        gaze_network_report_name = self.required('GAZE_NETWORK_REPORTING_NAME')
+        gaze_network_report_website_url = self.default('GAZE_NETWORK_REPORTING_WEBSITE_URL', None)
+        gaze_network_report_indexer_api_url = self.default('GAZE_NETWORK_REPORTING_INDEXER_API_URL', None)
 
-        return IndexerReportConfig(indexer_report_url, indexer_report_name, indexer_report_website_url, indexer_report_indexer_api_url)
+        return GazeNetworkReportConfig(gaze_network_report_url, gaze_network_report_name, gaze_network_report_website_url, gaze_network_report_indexer_api_url)
 
 
     def peer_discovery_enum(self):
@@ -226,7 +226,7 @@ class Env(EnvBase):
             return self.PD_ON
 
 @dataclass
-class IndexerReportConfig:
+class GazeNetworkReportConfig:
     url: str
     name: str
     website_url: 'str | None'
