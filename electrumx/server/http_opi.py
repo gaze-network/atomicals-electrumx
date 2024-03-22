@@ -56,9 +56,9 @@ def tx_contains_atomical_id(tx_data, atomical_id):
 
 @dataclass
 class BalanceQuery:
-    address: str | None
-    atomical_id: bytes | None
-    block_height: int | None
+    address: 'str | None'
+    atomical_id: 'bytes | None'
+    block_height: 'int | None'
 
 class HttpOPIHandler(object):
     def __init__(self, session_mgr: 'SessionManager', env: 'Env', db: DB, bp: BlockProcessor, http_handler: HttpHandler):
@@ -101,7 +101,7 @@ class HttpOPIHandler(object):
             'block_height': block_height
         })
     
-    def _process_balance(self, address: str, balances: dict[bytes, int], tx_data):
+    def _process_balance(self, address: str, balances: 'dict[bytes, int]', tx_data):
         inputs = tx_data['transfers']['inputs']
         outputs = tx_data['transfers']['outputs']
         for _, v in inputs.items():
@@ -134,7 +134,7 @@ class HttpOPIHandler(object):
     async def _get_populated_arc20_balances(self, address: str, atomical_id: 'bytes | None', block_height: int):
         pk_scriptb = get_script_from_address(address)
 
-        balances: dict[bytes, int] = {} # atomical_id -> amount (int)
+        balances: 'dict[bytes, int]' = {} # atomical_id -> amount (int)
         script_hash = sha256(pk_scriptb)
         hashX = scripthash_to_hashX(script_hash)
         if not hashX:
@@ -161,7 +161,7 @@ class HttpOPIHandler(object):
         atomicals_list = await asyncio.gather(*[self._get_atomical(atomical_id) for atomical_id in atomical_ids])
         atomicals = {atomical_id: atomical for atomical_id, atomical in zip(atomical_ids, atomicals_list)}
 
-        populated_balances: dict[str, dict] = {} # atomical_id -> { "amount": int, "ticker": str | None }
+        populated_balances: 'dict[str, dict]' = {} # atomical_id -> { "amount": int, "ticker": str | None }
         for atomical_id, amount in balances.items():
             atomical = atomicals.get(atomical_id)
             if atomical:
@@ -209,10 +209,10 @@ class HttpOPIHandler(object):
     @error_handler
     async def get_arc20_balances_batch(self, request: 'Request') -> 'Response':
         body = await request.json()
-        queries: list[BalanceQuery] = []
+        queries: 'list[BalanceQuery]' = []
         latest_block_height = self.db.db_height
 
-        raw_queries: list[dict] = body.get('queries', [])
+        raw_queries: 'list[dict]' = body.get('queries', [])
         for idx, raw_query in enumerate(raw_queries):
             address = raw_query.get('address')
             pk_script = raw_query.get('pk_script')
