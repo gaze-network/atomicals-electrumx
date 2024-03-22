@@ -56,9 +56,9 @@ def tx_contains_atomical_id(tx_data, atomical_id):
 
 @dataclass
 class BalanceQuery:
-    address: str | None
-    atomical_id: bytes | None
-    block_height: int | None
+    address: 'str | None'
+    atomical_id: 'bytes | None'
+    block_height: 'int | None'
 
 class HttpOPIHandler(object):
     def __init__(self, session_mgr: 'SessionManager', env: 'Env', db: DB, bp: BlockProcessor, http_handler: HttpHandler):
