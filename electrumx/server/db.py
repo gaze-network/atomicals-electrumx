@@ -20,6 +20,7 @@ from typing import Dict, List, Sequence, Tuple, Optional, TYPE_CHECKING
 import attr
 from aiorpcx import run_in_thread, sleep
 
+import electrumx
 import electrumx.lib.util as util
 from electrumx.lib.hash import hash_to_hex_str, HASHX_LEN, double_sha256
 from electrumx.lib.merkle import Merkle, MerkleCache
@@ -283,6 +284,7 @@ class DB:
         self.wall_time = 0
         self.first_sync = True
         self.db_version = -1
+        self.event_hash_version = -1
         self.logger.info(f'using {self.env.db_engine} for DB backend')
 
         # Header merkle cache
@@ -969,6 +971,7 @@ class DB:
             self.db_atomical_count = 0
             self.db_tip = b'\0' * 32
             self.db_version = max(self.DB_VERSIONS)
+            self.event_hash_version = electrumx.gaze_event_hash_version
             self.utxo_flush_count = 0
             self.wall_time = 0
             self.first_sync = True
@@ -981,6 +984,14 @@ class DB:
                 raise self.DBError(f'your UTXO DB version is {self.db_version} '
                                    f'but this software only handles versions '
                                    f'{self.DB_VERSIONS}')
+            self.event_hash_version = state.get('event_hash_version', None)
+            if self.event_hash_version is not None:
+                if self.event_hash_version != electrumx.gaze_event_hash_version:
+                    raise self.DBError(f'Your event hash version is {self.event_hash_version} but this software '
+                                       f'only supports version {electrumx.gaze_event_hash_version}. Please reset '
+                                       f'your database to block 808080 or lower and restart this software to reindex.')
+            else:
+                self.event_hash_version = electrumx.gaze_event_hash_version
             # backwards compat
             genesis_hash = state['genesis']
             if isinstance(genesis_hash, bytes):
@@ -1121,6 +1132,7 @@ class DB:
             'wall_time': self.wall_time,
             'first_sync': self.first_sync,
             'db_version': self.db_version,
+            'event_hash_version': self.event_hash_version,
         }
         batch.put(b'state', repr(state).encode())
 

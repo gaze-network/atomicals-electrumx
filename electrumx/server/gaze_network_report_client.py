@@ -32,6 +32,7 @@ class GazeNetworkReportClient:
             'type': type,
             'clientVersion': electrumx.version,
             'dbVersion': electrumx.gaze_db_version,
+            'eventHashVersion': electrumx.gaze_event_hash_version,
             'network': self.env.coin.NET,
             'blockHeight': height,
             'blockHash': block_hash.hex(),
