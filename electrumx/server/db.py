@@ -77,7 +77,7 @@ class FlushData:
     general_adds = attr.ib()            # type: List[Tuple[Sequence[bytes], Sequence[bytes]]]
     # realm_adds map realm names to tx_num ints, which then map onto an atomical_id
     # The purpose is to track the earliest appearance of a realm name claim request in the order of the commit tx number
-    realm_adds = attr.ib()              # type: Dict[bytes, Dict[int, bytes]
+    realm_adds = attr.ib()              # type: Dict[bytes, Dict[int, bytes]]
     # container_adds map container names to tx_num ints, which then map onto an atomical_id
     # The purpose is to track the earliest appearance of a container name claim request in the order of the commit tx number
     container_adds = attr.ib()          # type: List[Tuple[Sequence[bytes], Sequence[bytes]]]
@@ -85,21 +85,21 @@ class FlushData:
     # The purpose is to track the earliest appearance of a ticker name claim request in the order of the commit tx number
     ticker_adds = attr.ib()             # type: List[Tuple[Sequence[bytes], Sequence[bytes]]]
     # subrealm_adds maps parent_realm_id + subrealm name to tx_num ints, which then map onto an atomical_id
-    subrealm_adds = attr.ib()           # type: Dict[bytes, Dict[int, bytes]
+    subrealm_adds = attr.ib()           # type: Dict[bytes, Dict[int, bytes]]
     # subrealmpay_adds maps atomical_id to tx_num ints, which then map onto payment_outpoints
-    subrealmpay_adds = attr.ib()           # type: Dict[bytes, Dict[int, bytes]
+    subrealmpay_adds = attr.ib()           # type: Dict[bytes, Dict[int, bytes]]
     # dmitem_adds maps parent_realm_id + dmitem name to tx_num ints, which then map onto an atomical_id
-    dmitem_adds = attr.ib()           # type: Dict[bytes, Dict[int, bytes]
+    dmitem_adds = attr.ib()           # type: Dict[bytes, Dict[int, bytes]]
     # dmpay_adds maps atomical_id to tx_num ints, which then map onto payment_outpoints
-    dmpay_adds = attr.ib()           # type: Dict[bytes, Dict[int, bytes]
+    dmpay_adds = attr.ib()           # type: Dict[bytes, Dict[int, bytes]]
     # distmint_adds tracks the b'gi' which is the initial distributed mint location tracked to determine if any more mints are allowed
     # It maps atomical_id (of the dft deploy token mint) to location_ids and then the details of the scripthash+value_sats of the mint        
-    distmint_adds = attr.ib()           # type: Dict[bytes, Dict[bytes, bytes]
+    distmint_adds = attr.ib()           # type: Dict[bytes, Dict[bytes, bytes]]
     # state_adds is for evt, mod state updates
     # It maps atomical_id to the data of the state update      
-    state_adds = attr.ib()           # type: Dict[bytes, Dict[bytes, bytes]
+    state_adds = attr.ib()           # type: Dict[bytes, Dict[bytes, bytes]]
     # op_adds is for record tx operation of one tx
-    op_adds = attr.ib()   # type: Dict[bytes, Dict[bytes]
+    op_adds = attr.ib()   # type: Dict[bytes, Dict[bytes]]
     
 COMP_TXID_LEN = 4
 
