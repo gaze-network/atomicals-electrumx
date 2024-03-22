@@ -20,7 +20,7 @@ if TYPE_CHECKING:
    from typing import Literal
 
 class FtColoringSummary:
-  def __init__(self, atomical_id_to_expected_outs_map: 'dict[bytes, ExpectedOutputSet]', fts_burned: dict[bytes, float], cleanly_assigned: bool, atomicals_list: 'list[AtomicalInputSummary]'):
+  def __init__(self, atomical_id_to_expected_outs_map: 'dict[bytes, ExpectedOutputSet]', fts_burned: 'dict[bytes, float]', cleanly_assigned: bool, atomicals_list: 'list[AtomicalInputSummary]'):
     self.atomical_id_to_expected_outs_map = atomical_id_to_expected_outs_map
     self.cleanly_assigned = cleanly_assigned
     self.fts_burned = fts_burned
@@ -65,9 +65,9 @@ def calculate_outputs_to_color_for_ft_atomical_ids(tx, ft_atomicals, sort_by_fif
         # return FtColoringSummary(potential_atomical_ids_to_output_idxs_map, fts_burned, not non_clean_output_slots, atomical_list)
     atomical_list = order_ft_inputs(ft_atomicals, sort_by_fifo)
     next_start_out_idx = 0
-    potential_atomical_ids_to_output_idxs_map: dict[bytes, ExpectedOutputSet] = {}
+    potential_atomical_ids_to_output_idxs_map: 'dict[bytes, ExpectedOutputSet]' = {}
     non_clean_output_slots = False
-    fts_burned: dict[bytes, float] = {}
+    fts_burned: 'dict[bytes, float]' = {}
     for item in atomical_list:
       atomical_id = item.atomical_id
       # If a target exponent was provided, then use that instead
@@ -118,7 +118,7 @@ class AtomicalInputSummary:
     self.type = atomical_type
     self.total_satsvalue = 0 
     self.total_tokenvalue = 0
-    self.input_indexes: list[AtomicalInputItem] = []
+    self.input_indexes: 'list[AtomicalInputItem]' = []
     self.max_exponent = 0
     self.mint_info = mint_info
 
@@ -146,7 +146,7 @@ class AtomicalColoredOutputNft:
     self.input_summary_info = input_summary_info  
     
 class AtomicalFtOutputBlueprintAssignmentSummary:
-  def __init__(self, outputs: "dict[int, dict[Literal['atomicals'], dict[bytes, AtomicalColoredOutputFt]]]", fts_burned: dict[bytes, float], cleanly_assigned: bool, first_atomical_id: bytes):
+  def __init__(self, outputs: "dict[int, dict[Literal['atomicals'], dict[bytes, AtomicalColoredOutputFt]]]", fts_burned: 'dict[bytes, float]', cleanly_assigned: bool, first_atomical_id: bytes):
     self.outputs = outputs 
     self.fts_burned = fts_burned
     self.cleanly_assigned = cleanly_assigned
@@ -156,8 +156,8 @@ class AtomicalNftOutputBlueprintAssignmentSummary:
   def __init__(self, outputs: "dict[int, dict[Literal['atomicals'], dict[bytes, AtomicalInputSummary]]]"):
     self.outputs = outputs 
 
-def order_ft_inputs(ft_atomicals: dict[bytes, AtomicalInputSummary], sort_by_fifo):
-  atomical_list: list[AtomicalInputSummary] = []
+def order_ft_inputs(ft_atomicals: 'dict[bytes, AtomicalInputSummary]', sort_by_fifo):
+  atomical_list: 'list[AtomicalInputSummary]' = []
   # If sorting is by FIFO, then get the mappng of which FTs are at which inputs
   if sort_by_fifo:
     input_idx_map = {}
@@ -404,7 +404,7 @@ class AtomicalsTransferBlueprintBuilder:
   # Builds a map and image of all the inputs and their satvalue and tokenvalue (adjusted by exponent)
   # This is the base datastructure used to color FT outputs and determine what exact satvalue will be needed to maintain input token value to outputs
   @classmethod
-  def build_atomical_input_summaries(cls, get_atomicals_id_mint_info, map_atomical_ids_to_summaries: dict[bytes, AtomicalInputSummary], atomicals_entry_list, txin_index):
+  def build_atomical_input_summaries(cls, get_atomicals_id_mint_info, map_atomical_ids_to_summaries: 'dict[bytes, AtomicalInputSummary]', atomicals_entry_list, txin_index):
       atomicals_id_mint_info_map = {}
       # For each input atomical spent at the current input...
       for atomicals_entry in atomicals_entry_list:
@@ -431,14 +431,14 @@ class AtomicalsTransferBlueprintBuilder:
   
   @classmethod
   def build_atomical_input_summaries_by_type(cls, get_atomicals_id_mint_info, atomicals_spent_at_inputs):
-      map_atomical_ids_to_summaries: dict[bytes, AtomicalInputSummary] = {}
+      map_atomical_ids_to_summaries: 'dict[bytes, AtomicalInputSummary]' = {}
       for txin_index, atomicals_entry_list in atomicals_spent_at_inputs.items():
           # Accumulate the total input value by atomical_id
           # The value will be used below to determine the amount of input we can allocate for FT's
           AtomicalsTransferBlueprintBuilder.build_atomical_input_summaries(get_atomicals_id_mint_info, map_atomical_ids_to_summaries, atomicals_entry_list, txin_index)
       # Group the atomicals by NFT and FT for easier handling
-      nft_atomicals: dict[bytes, AtomicalInputSummary] = {}
-      ft_atomicals: dict[bytes, AtomicalInputSummary] = {}
+      nft_atomicals: 'dict[bytes, AtomicalInputSummary]' = {}
+      ft_atomicals: 'dict[bytes, AtomicalInputSummary]' = {}
       for atomical_id, mint_info in map_atomical_ids_to_summaries.items(): 
           if mint_info.type == 'NFT':
               nft_atomicals[atomical_id] = mint_info

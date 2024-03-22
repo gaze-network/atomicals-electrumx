@@ -173,7 +173,7 @@ class MemPool:
 
     @classmethod
     def _compress_histogram(
-            cls, histogram: Dict[float, int], *, bin_size: int
+            cls, histogram: 'dict[float, int]', *, bin_size: int
     ) -> Sequence[Tuple[float, int]]:
         '''Calculate and return a compact fee histogram as needed for
         "mempool.get_fee_histogram" protocol request.
