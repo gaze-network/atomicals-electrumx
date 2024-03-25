@@ -1,5 +1,7 @@
 import asyncio
+import base64
 from dataclasses import dataclass
+import json
 from electrumx.lib.hash import HASHX_LEN, hex_str_to_hash, sha256
 from electrumx.lib.script2addr import get_address_from_output_script, get_script_from_address
 from electrumx.lib.util_atomicals import DFT_MINT_MAX_MAX_COUNT_DENSITY, compact_to_location_id_bytes, location_id_bytes_to_compact
@@ -16,6 +18,13 @@ if TYPE_CHECKING:
     from electrumx.server.session import SessionManager
     from aiohttp.web import Request, Response
 
+class JSONBytesEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, bytes):
+            # use base64 encoding for bytes
+            return base64.b64encode(obj).decode()
+        return super().default(obj)
+
 def format_response(result: 'dict | None', status: 'int | None' = None, error: 'str | None' = None) -> 'Response':
     if error:
         if status == None:
@@ -24,6 +33,7 @@ def format_response(result: 'dict | None', status: 'int | None' = None, error: '
                 'error': error,
             },
             status=status,
+            dumps=lambda o: json.dumps(o, cls=JSONBytesEncoder)
         )
     if status == None:
         status = 200
@@ -32,6 +42,7 @@ def format_response(result: 'dict | None', status: 'int | None' = None, error: '
                 'result': result,
             },
             status=status,
+            dumps=lambda o: json.dumps(o, cls=JSONBytesEncoder)
         )
 
 def scripthash_to_hashX(script_hash: bytes) -> 'Optional[bytes]':
@@ -78,7 +89,7 @@ class HttpOPIHandler(object):
             try:
                 return await func(self, *args, **kwargs)
             except Exception as e:
-                self.logger.warning(f'Request has failed with exception: {repr(e)}')
+                self.logger.exception(f'Request has failed with exception: {repr(e)}')
                 return format_response(None, 500, "Internal Server Error")
         return wrapper
 
