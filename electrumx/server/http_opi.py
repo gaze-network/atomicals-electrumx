@@ -41,10 +41,14 @@ def scripthash_to_hashX(script_hash: bytes) -> 'Optional[bytes]':
 
 def tx_contains_atomical_id(tx_data, atomical_id):
     atomical_id_str = location_id_bytes_to_compact(atomical_id)
-    if any([v['atomical_id'] == atomical_id_str for _, v in tx_data['transfers']['inputs'].items()]):
-        return True
-    if any([v['atomical_id'] == atomical_id_str for _, v in tx_data['transfers']['outputs'].items()]):
-        return True
+    for _, input_atomicals in tx_data['transfers']['inputs'].items():
+        for input_atomical in input_atomicals:
+            if input_atomical['atomical_id'] == atomical_id_str:
+                return True
+    for _, output_atomicals in tx_data['transfers']['outputs'].items():
+        for output_atomical in output_atomicals:
+            if output_atomical['atomical_id'] == atomical_id_str:
+                return True
     if atomical_id_str in tx_data['transfers']['burned_fts'] and tx_data['transfers']['burned_fts'][atomical_id] > 0:
         return True
     if tx_data['info'].get('atomical_id') == atomical_id_str:
@@ -104,27 +108,31 @@ class HttpOPIHandler(object):
     def _process_balance(self, address: str, balances: 'dict[bytes, int]', tx_data):
         inputs = tx_data['transfers']['inputs']
         outputs = tx_data['transfers']['outputs']
-        for _, v in inputs.items():
-            if v['address'] == address and v['type'] == 'FT':
-                atomical_id_str = v['atomical_id']
-                atomical_id = compact_to_location_id_bytes(atomical_id_str)
-                if atomical_id not in balances:
-                    balances[atomical_id] = 0
-                balances[atomical_id] -= v['value']
-        for _, v in outputs.items():
-            if v['address'] == address and v['type'] == 'FT':
-                atomical_id_str = v['atomical_id']
-                atomical_id = compact_to_location_id_bytes(atomical_id_str)
-                if atomical_id not in balances:
-                    balances[atomical_id] = 0
-                balances[atomical_id] += v['value']
+        for _, input_atomicals in inputs.items():
+            for input_atomical in input_atomicals:
+                if input_atomical['address'] == address and input_atomical['type'] == 'FT':
+                    atomical_id_str = input_atomical['atomical_id']
+                    atomical_id = compact_to_location_id_bytes(atomical_id_str)
+                    if atomical_id not in balances:
+                        balances[atomical_id] = 0
+                    balances[atomical_id] -= input_atomical['value']
+        for _, output_atomicals in outputs.items():
+            for output_atomical in output_atomicals:
+                if output_atomical['address'] == address and output_atomical['type'] == 'FT':
+                    atomical_id_str = output_atomical['atomical_id']
+                    atomical_id = compact_to_location_id_bytes(atomical_id_str)
+                    if atomical_id not in balances:
+                        balances[atomical_id] = 0
+                    balances[atomical_id] += output_atomical['value']
         if tx_data['op'] in ['mint-dft', 'mint-ft']:
-            atomical_id_str = tx_data['info']['atomical_id']
-            atomical_id = compact_to_location_id_bytes(atomical_id_str)
-            if atomical_id not in balances:
-                balances[atomical_id] = 0
-            # minted fts is always at output 0
-            balances[atomical_id] += tx_data['info']['outputs'][0]['value']
+            # minted fts is always at output index 0
+            minted_fts = tx_data['info']['outputs'][0]
+            for minted_ft in minted_fts:
+                atomical_id_str = minted_ft['atomical_id']
+                atomical_id = compact_to_location_id_bytes(atomical_id_str)
+                if atomical_id not in balances:
+                    balances[atomical_id] = 0
+                balances[atomical_id] += minted_ft['value']
     
     async def _get_atomical(self, atomical_id: bytes) -> 'Optional[str]':
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
