@@ -1,6 +1,7 @@
 import json
 import requests
 import electrumx
+from electrumx.lib.hash import hash_to_hex_str
 from electrumx.lib.util import class_logger
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -28,6 +29,9 @@ class GazeNetworkReportClient:
         self.env = env
     
     def submit_block_report(self, type: str, height: int, block_hash: bytes, event_hash: bytes, cumulative_event_hash: bytes):
+        block_hash_str = hash_to_hex_str(block_hash)
+        event_hash_str = hash_to_hex_str(event_hash)
+        cumulative_event_hash_str = hash_to_hex_str(cumulative_event_hash)
         data = {
             'type': type,
             'clientVersion': electrumx.version,
@@ -35,15 +39,15 @@ class GazeNetworkReportClient:
             'eventHashVersion': electrumx.gaze_event_hash_version,
             'network': self.env.coin.NET,
             'blockHeight': height,
-            'blockHash': block_hash.hex(),
-            'eventHash': event_hash.hex(),
-            'cumulativeEventHash': cumulative_event_hash.hex(),
+            'blockHash': block_hash_str,
+            'eventHash': event_hash_str,
+            'cumulativeEventHash': cumulative_event_hash_str,
         }
         resp = requests.post(f'{self.env.gaze_network_report.url}/v1/report/block', json=data)
         if resp.status_code >= 400:
             self.logger.warning(f'submit_block_report: Failed to submit block report. request_body={json.dumps(data)} status_code={resp.status_code}, text={resp.text}')
         else:
-            self.logger.info(f"submit_block_report: Submitted block report to Gaze Network: type {type} height {height}, block_hash {block_hash.hex()}, event_hash {event_hash.hex()}, cumulative_event_hash {cumulative_event_hash.hex()}")
+            self.logger.info(f"submit_block_report: Submitted block report to Gaze Network: type {type} height {height}, block_hash {block_hash_str}, event_hash {event_hash_str}, cumulative_event_hash {cumulative_event_hash_str}")
     
     def submit_node_report(self, type: str):
         data = {
