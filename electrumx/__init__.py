@@ -1,4 +1,4 @@
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 version = f'gaze-electrumx-v{__version__}'
 version_short = __version__
 gaze_db_version = 1
