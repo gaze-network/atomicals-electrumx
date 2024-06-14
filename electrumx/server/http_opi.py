@@ -169,7 +169,7 @@ class HttpOPIHandler(object):
             history_list.append(history)
 
         history_list.sort(key=lambda x: x['tx_num'])
-        tx_datas = await asyncio.gather(*[self.http_handler.get_transaction_detail(history["tx_hash"], history["height"], history["tx_num"]) for history in history_list])
+        tx_datas = await asyncio.gather(*[self.session_mgr.get_transaction_detail(history["tx_hash"], history["height"], history["tx_num"]) for history in history_list])
         for tx_data in tx_datas:
             self._process_balance(address, balances, tx_data)
         
@@ -302,7 +302,7 @@ class HttpOPIHandler(object):
             })
             
         txs.sort(key=lambda x: x['tx_num'])
-        tx_datas = await asyncio.gather(*[self.http_handler.get_transaction_detail(tx["tx_hash"], block_height, tx["tx_num"]) for tx in txs])
+        tx_datas = await asyncio.gather(*[self.session_mgr.get_transaction_detail(tx["tx_hash"], block_height, tx["tx_num"]) for tx in txs])
         result = []
         for tx_data in tx_datas:
             # filter by atomical_id if specified

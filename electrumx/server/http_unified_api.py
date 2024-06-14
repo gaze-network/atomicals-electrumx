@@ -1,14 +1,14 @@
 import asyncio
 import base64
 from dataclasses import dataclass
-from hashlib import sha256
 import json
 from typing import TYPE_CHECKING, Optional
-from electrumx.lib import util
 from aiohttp.web import json_response
 from aiohttp.web_urldispatcher import UrlDispatcher
-from electrumx.lib.hash import HASHX_LEN, hex_str_to_hash
-from electrumx.lib.script2addr import get_script_from_address
+
+from electrumx.lib import util
+from electrumx.lib.hash import HASHX_LEN, hex_str_to_hash, sha256
+from electrumx.lib.script2addr import get_address_from_output_script, get_script_from_address
 from electrumx.lib.util_atomicals import compact_to_location_id_bytes, location_id_bytes_to_compact
 from electrumx.server.block_processor import BlockProcessor
 from electrumx.server.db import DB
@@ -53,8 +53,8 @@ def scripthash_to_hashX(script_hash: bytes) -> 'Optional[bytes]':
 
 @dataclass
 class BalanceQuery:
-    wallet: 'str | None' # address or pkscript
-    id: 'bytes | None' # atomical_id or ticker
+    address: str
+    atomical_id: 'bytes | None'
     block_height: 'int | None'
 
 class HttpUnifiedAPIHandler(object):
@@ -79,12 +79,12 @@ class HttpUnifiedAPIHandler(object):
         router.add_get("/v2/arc20/block", self.get_block_height)
         router.add_get("/v2/arc20/balances/wallet/{wallet}", self.get_arc20_balance)
         router.add_post("/v2/arc20/balances/wallet/batch", self.get_arc20_balances_batch)
-        router.add_get("/v2/arc20/transactions", self.get_arc20_activity)
+        router.add_get("/v2/arc20/transactions", self.get_arc20_transactions)
         router.add_get("/v2/arc20/holders/{id}", self.get_arc20_holders)
         router.add_get("/v2/arc20/info/{id}", self.get_arc20_token)
         router.add_get("/v2/arc20/utxos/wallet/{wallet}", self.get_arc20_utxos)
 
-    def _resolve_ticker_to_atomical_id(self, ticker: str) -> bytes:
+    def _resolve_ticker_to_atomical_id(self, ticker: str) -> bytes | None:
         bp = self.session_mgr.bp
         height = bp.height
         ticker = ticker.lower() # tickers are case-insensitive
@@ -93,7 +93,7 @@ class HttpUnifiedAPIHandler(object):
             return candidate_atomical_id
         else:
             return None
-        
+
     # check if this is atomicalId or ticker
     def _parse_request_id(self, id) -> bytes | None:
         if not id:
@@ -106,6 +106,23 @@ class HttpUnifiedAPIHandler(object):
             if not atomical_id:
                 raise Exception("Ticker is not found or is not confirmed.")
         return atomical_id
+
+    # check if this is address or pk_script
+    def _parse_addr(self, wallet: str) -> str | None:
+        if not wallet:
+            return None
+        addr = None
+        try:
+            pk_bytes = bytes.fromhex(wallet)
+        except:
+            pk_bytes = None
+        if pk_bytes:
+            addr_from_pk = get_address_from_output_script(bytes.fromhex(wallet))
+            if addr_from_pk:
+                addr = addr_from_pk
+        else:
+            addr = wallet
+        return addr
 
     @error_handler
     async def get_block_height(self, request: 'Request') -> 'Response':
@@ -180,35 +197,38 @@ class HttpUnifiedAPIHandler(object):
         atomicals_list = await asyncio.gather(*[self._get_atomical(atomical_id) for atomical_id in atomical_ids])
         atomicals = {atomical_id: atomical for atomical_id, atomical in zip(atomical_ids, atomicals_list)}
 
-        # {
-        #     "amount": string, // numeric string
-        #     "id": string, // (e.g. tick, atomicalId, runeId)
-        #     "name": string,
-        #     "symbol": string,
-        #     "decimals": number
-        # }
         populated_balances: 'list[dict]' = [] # atomical_id -> { "amount": int, "ticker": str | None }
         for atomical_id, amount in balances.items():
             atomical = atomicals.get(atomical_id)
             if atomical:
                 atomical = await self.db.populate_extended_atomical_holder_info(atomical_id, atomical)
+                ticker = atomical.get("ticker")
+                if not ticker:
+                    ticker = "" # default to empty string
                 balance = {
-                    "id": atomical_id,
-                    "amount": amount,
+                    "amount": str(amount),
+                    "id": location_id_bytes_to_compact(atomical_id),
+                    "name": ticker,
+                    "symbol": ticker,
+                    "decimals": 0, # no decimal point for arc20
                 }
                 populated_balances.append(balance)
         return populated_balances
     
     @error_handler
     async def get_arc20_balance(self, request: 'Request') -> 'Response':
-        wallet = request.match_info.get("wallet", "") # address or pk_script
-        # TODO: extract address or pk_script
-        # TODO: convert pk_script to address
+        # parse wallet
+        wallet = request.match_info.get("wallet", "")
+        address = self._parse_addr(wallet)
+        if not address:
+            return format_response(None, 400, 'Invalid wallet.')
 
+        # parse block_height
         latest_block_height = self.db.db_height
         block_height = int(request.query.get('blockHeight', latest_block_height))
         
-        id = request.query.get("id") # atomicalId or ticker
+        # parse atomical_id
+        id = request.query.get("id")
         atomical_id = None
         if id:
             try:
@@ -230,8 +250,15 @@ class HttpUnifiedAPIHandler(object):
 
         raw_queries: 'list[dict]' = body.get('queries', [])
         for idx, raw_query in enumerate(raw_queries):
+            # parse wallet
+            wallet = raw_query.get("wallet", "")
+            address = self._parse_addr(wallet)
+            if not address:
+                return format_response(None, 400, f'query index {idx}: invalid wallet.')
+            
+            # parse block_height
             block_height = int(raw_query.get('blockHeight', latest_block_height))
-
+            
             # parse atomical_id
             id = raw_query.get("id")
             atomical_id = None
@@ -241,15 +268,10 @@ class HttpUnifiedAPIHandler(object):
                 except:
                     return format_response(None, 400, f'query index {idx}: invalid ID.')
             
-            wallet = raw_query.get("wallet") # TODO: extract wallet or pk_script
-            # parse address
-            # if not address:
-            #     if not pk_script:
-            #         return format_response(None, 400, f'query index {idx}: invalid wallet')
-            #     address = get_address_from_output_script(bytes.fromhex(pk_script))
-            queries.append(BalanceQuery(wallet, atomical_id, block_height))
+            # append to list
+            queries.append(BalanceQuery(address, atomical_id, block_height))
         
-        results = await asyncio.gather(*[self._get_populated_arc20_balances(query.wallet, query.id, query.block_height) for query in queries])
+        results = await asyncio.gather(*[self._get_populated_arc20_balances(query.address, query.atomical_id, query.block_height) for query in queries])
         formatted_results = [{
             "blockHeight": query.block_height,
             "list": result
@@ -259,23 +281,53 @@ class HttpUnifiedAPIHandler(object):
         })
     
     @error_handler
-    async def get_arc20_activity(self, request: 'Request') -> 'Response':
+    async def get_arc20_transactions(self, request: 'Request') -> 'Response':
+        # parse wallet (optional)
+        wallet = request.query.get("wallet", "")
+        address = self._parse_addr(wallet)
+
+        # parse block_height
+        latest_block_height = self.db.db_height
+        block_height = int(request.query.get('blockHeight', latest_block_height))
+        
+        # parse atomical_id
+        id = request.query.get("id")
+        atomical_id = None
+        if id:
+            try:
+                atomical_id = self._parse_request_id(id)
+            except:
+                return format_response(None, 400, 'Invalid ID.')
         return format_response(None, 500, "impl")
     
     @error_handler
     async def get_arc20_holders(self, request: 'Request') -> 'Response':
-        id = request.match_info.get("id", "") # atomical_id or ticker
+        # parse atomical_id
+        id = request.match_info.get("id", "")
+        atomical_id = None
+        if id:
+            try:
+                atomical_id = self._parse_request_id(id)
+            except:
+                return format_response(None, 400, 'Invalid ID.')
         return format_response(None, 500, "impl")
     
     @error_handler
     async def get_arc20_token(self, request: 'Request') -> 'Response':
-        id = request.match_info.get("id", "") # atomical_id or ticker
+        # parse atomical_id
+        id = request.match_info.get("id", "")
+        atomical_id = None
+        if id:
+            try:
+                atomical_id = self._parse_request_id(id)
+            except:
+                return format_response(None, 400, 'Invalid ID.')
         return format_response(None, 500, "impl")
     
     @error_handler
     async def get_arc20_utxos(self, request: 'Request') -> 'Response':
-        wallet = request.match_info.get("wallet", "") # address or pk_script
-        # TODO: extract address or pk_script
-        # TODO: convert pk_script to address
+        # parse wallet
+        wallet = request.match_info.get("wallet", "")
+        address = self._parse_addr(wallet)
         
         return format_response(None, 500, "impl")
