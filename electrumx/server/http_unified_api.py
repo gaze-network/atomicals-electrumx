@@ -9,7 +9,7 @@ from aiohttp.web_urldispatcher import UrlDispatcher
 from electrumx.lib import util
 from electrumx.lib.hash import HASHX_LEN, hex_str_to_hash, sha256
 from electrumx.lib.script2addr import get_address_from_output_script, get_script_from_address
-from electrumx.lib.util_atomicals import compact_to_location_id_bytes, location_id_bytes_to_compact
+from electrumx.lib.util_atomicals import DFT_MINT_MAX_MAX_COUNT_DENSITY, compact_to_location_id_bytes, location_id_bytes_to_compact
 from electrumx.server.block_processor import BlockProcessor
 from electrumx.server.db import DB
 from electrumx.server.http_session import HttpHandler
@@ -310,7 +310,52 @@ class HttpUnifiedAPIHandler(object):
                 atomical_id = self._parse_request_id(id)
             except:
                 return format_response(None, 400, 'Invalid ID.')
-        return format_response(None, 500, "impl")
+            
+        # parse block_height
+        latest_block_height = self.db.db_height
+        block_height = int(request.query.get('blockHeight', latest_block_height))
+
+        # TODO: add block_height to filter
+
+        atomical = await self._get_atomical(atomical_id)
+        atomical = await self.db.populate_extended_atomical_holder_info(atomical_id, atomical)
+        formatted_results = []
+        max_supply = 0
+        mint_amount = 0
+        if atomical["type"] == "FT":
+            if atomical["$mint_mode"] == "fixed":
+                max_supply = atomical.get('$max_supply', 0)
+            else:
+                max_supply = atomical.get('$max_supply', -1)
+                if max_supply < 0:
+                    mint_amount = atomical.get("mint_info", {}).get("args", {}).get("mint_amount")
+                    max_supply = DFT_MINT_MAX_MAX_COUNT_DENSITY * mint_amount
+            for holder in atomical.get("holders", []):
+                percent = holder['holding'] / max_supply
+                formatted_results.append({
+                    "address": get_address_from_output_script(bytes.fromhex(holder['script'])),
+                    "pkScript": holder['script'],
+                    "percent": percent,
+                    "holding": holder["holding"]
+                })
+        elif atomical["type"] == "NFT":
+            for holder in atomical.get("holders", []):
+                formatted_results.append({
+                    "address": get_address_from_output_script(bytes.fromhex(holder['script'])),
+                    "pkScript": holder['script'],
+                    "percent": 1,
+                    "holding": holder["holding"]
+                })
+        
+        # sort by holding desc
+        formatted_results.sort(key=lambda x: x['holding'], reverse=True)
+
+        return format_response({
+            "blockHeight": block_height,
+            "totalSupply": str(max_supply),
+            "mintedAmount": str(mint_amount),
+            "list": formatted_results
+        })
     
     @error_handler
     async def get_arc20_token(self, request: 'Request') -> 'Response':
