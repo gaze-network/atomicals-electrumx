@@ -13,7 +13,7 @@ import itertools
 import time
 from calendar import timegm
 from struct import pack
-from typing import TYPE_CHECKING, Type
+from typing import TYPE_CHECKING, Type, Union
 
 import aiohttp
 from aiorpcx import JSONRPC
@@ -26,7 +26,7 @@ from electrumx.lib.util import (class_logger, hex_to_bytes, json_deserialize,
                                 unpack_le_uint16_from)
 
 if TYPE_CHECKING:
-    from electrumx.lib.coins import Coin
+    from electrumx.lib.coins import Coin, AtomicalsCoinMixin
 
 
 class DaemonError(Exception):
@@ -51,12 +51,13 @@ class Daemon:
 
     def __init__(
             self,
-            coin: Type['Coin'],
+            coin: Type[Union['Coin', 'AtomicalsCoinMixin']],
             url,
             *,
             max_workqueue=10,
             init_retry=0.25,
             max_retry=4.0,
+            proxy_url=None,
             max_rate=None,
             rate_period_sec=None,
     ):
@@ -65,6 +66,9 @@ class Daemon:
         self.url_index = None
         self.urls = []
         self.set_url(url)
+        self.proxy_url: str | None = proxy_url
+        if proxy_url:
+            self.logger.info(f'Using proxy {proxy_url} for daemon.')
         # Limit concurrent RPC calls to this number.
         # See DEFAULT_HTTP_WORKQUEUE in bitcoind, which is typically 16
         self.workqueue_semaphore = asyncio.Semaphore(value=max_workqueue)
@@ -72,7 +76,7 @@ class Daemon:
         self.max_retry = max_retry
         self._height = None
         self.available_rpcs = {}
-        self.session = None
+        self.session: aiohttp.ClientSession | None = None
         self.limiter = None
         if max_rate and rate_period_sec:
             self.limiter = AsyncLimiter(max_rate, rate_period_sec)
@@ -128,7 +132,7 @@ class Daemon:
             await self.limiter.acquire(request_count)
         async with self.workqueue_semaphore:
             if self.session:
-                async with self.session.post(self.current_url(), data=data) as resp:
+                async with self.session.post(self.current_url(), data=data, proxy=self.proxy_url) as resp:
                     if resp.status == 429:
                         raise DaemonRateLimitError
                     kind = resp.headers.get('Content-Type', None)
@@ -343,12 +347,14 @@ class Daemon:
         '''Query the daemon for its current height.'''
         self._height = await self._send_single('getblockcount')
         return self._height
+        # return self.coin.ATOMICALS_ACTIVATION_HEIGHT - 1
 
     def cached_height(self):
         '''Return the cached daemon height.
 
         If the daemon has not been queried yet this returns None.'''
         return self._height
+        # return self.coin.ATOMICALS_ACTIVATION_HEIGHT - 1
 
 
 class DashDaemon(Daemon):

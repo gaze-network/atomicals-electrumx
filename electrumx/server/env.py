@@ -11,10 +11,10 @@
 from dataclasses import dataclass
 import re
 from ipaddress import IPv4Address, IPv6Address
-from typing import Type
+from typing import Type, Union
 
 from aiorpcx import Service, ServicePart
-from electrumx.lib.coins import Coin
+from electrumx.lib.coins import Coin, AtomicalsCoinMixin
 from electrumx.lib.env_base import EnvBase
 import sys
 
@@ -36,7 +36,7 @@ class Env(EnvBase):
     SSL_PROTOCOLS = {'ssl', 'wss'}
     KNOWN_PROTOCOLS = {'ssl', 'tcp', 'ws', 'wss', 'rpc', 'http'}
 
-    coin: Type[Coin]
+    coin: Type[Union['Coin', 'AtomicalsCoinMixin']]
 
     def __init__(self, coin=None):
         super().__init__()
@@ -49,6 +49,7 @@ class Env(EnvBase):
 
         self.db_dir = self.required('DB_DIRECTORY')
         self.daemon_url = self.required('DAEMON_URL')
+        self.daemon_proxy_url = self.default('DAEMON_PROXY_URL', None)
         self.daemon_rate_limit_max_rate = self.integer('DAEMON_RATE_LIMIT_MAX_RATE', None)
         self.daemon_rate_limit_period_sec = self.integer('DAEMON_RATE_LIMIT_PERIOD_SEC', None)
         if coin is not None:

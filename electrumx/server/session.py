@@ -36,20 +36,20 @@ import electrumx.lib.util as util
 from electrumx.lib.util import OldTaskGroup, unpack_le_uint64
 from electrumx.lib.util_atomicals import (
     DFT_MINT_MAX_MAX_COUNT_DENSITY,
-    format_name_type_candidates_to_rpc, 
-    SUBREALM_MINT_PATH, 
+    format_name_type_candidates_to_rpc,
+    SUBREALM_MINT_PATH,
     MINT_SUBNAME_RULES_BECOME_EFFECTIVE_IN_BLOCKS,
     DMINT_PATH,
-    convert_db_mint_info_to_rpc_mint_info_format, 
-    compact_to_location_id_bytes, 
-    location_id_bytes_to_compact, 
+    convert_db_mint_info_to_rpc_mint_info_format,
+    compact_to_location_id_bytes,
+    location_id_bytes_to_compact,
     is_compact_atomical_id,
     format_name_type_candidates_to_rpc_for_subname,
     calculate_latest_state_from_mod_history,
     parse_protocols_operations_from_witness_array,
     validate_rules_data,
     AtomicalsValidationError,
-    auto_encode_bytes_elements, 
+    auto_encode_bytes_elements,
     validate_merkle_proof_dmint
 )
 from electrumx.lib.hash import (HASHX_LEN, Base58Error, hash_to_hex_str,
@@ -124,7 +124,7 @@ def assert_atomical_id(value):
         if value == None or value == "":
             raise RPCError(BAD_REQUEST, f'atomical_id required')
         index_of_i = value.find("i")
-        if index_of_i != 64: 
+        if index_of_i != 64:
             raise RPCError(BAD_REQUEST, f'{value} should be an atomical_id')
         raw_hash = hex_str_to_hash(value[ : 64])
         if len(raw_hash) == 32:
@@ -207,16 +207,6 @@ class SessionManager:
         # Event triggered when electrumx is listening for incoming requests.
         self.server_listening = Event()
         self.session_event = Event()
-        self.op_list = {
-            "mint-dft": 1, "mint-ft": 2, "mint-nft": 3, "mint-nft-realm": 4,
-            "mint-nft-subrealm": 5, "mint-nft-container": 6, "mint-nft-item": 7,
-            "dft": 20, "dat": 21, "split": 22, "splat": 23,
-            "seal": 24, "evt": 25, "mod": 26,
-            "transfer": 30, "invalid-mint": 31,
-            "payment-subrealm": 40, "payment-dmitem": 41,
-            "mint-dft-failed": 51, "mint-ft-failed": 52, "mint-nft-failed": 53, "mint-nft-realm-failed": 54,
-            "mint-nft-subrealm-failed": 55, "mint-nft-container-failed": 56, "mint-nft-item-failed": 57,
-        }
 
         # Set up the RPC request handlers
         cmds = ('add_peer daemon_url disconnect getinfo groups log peers '
@@ -274,6 +264,7 @@ class SessionManager:
                     app.router.add_get('/proxy/blockchain.atomicals.listscripthash', handler.atomicals_listscripthash)
                     app.router.add_get('/proxy/blockchain.atomicals.list', handler.atomicals_list)
                     app.router.add_get('/proxy/blockchain.atomicals.get_numbers', handler.atomicals_num_to_id)
+                    app.router.add_get('/proxy/blockchain.atomicals.get_block_hash', handler.atomicals_block_hash)
                     app.router.add_get('/proxy/blockchain.atomicals.get_block_txs', handler.atomicals_block_txs)
                     app.router.add_get('/proxy/blockchain.atomicals.dump', handler.atomicals_dump)
                     app.router.add_get('/proxy/blockchain.atomicals.at_location', handler.atomicals_at_location)
@@ -334,6 +325,7 @@ class SessionManager:
                     app.router.add_post('/proxy/blockchain.atomicals.listscripthash', handler.atomicals_listscripthash)
                     app.router.add_post('/proxy/blockchain.atomicals.list', handler.atomicals_list)
                     app.router.add_post('/proxy/blockchain.atomicals.get_numbers', handler.atomicals_num_to_id)
+                    app.router.add_post('/proxy/blockchain.atomicals.get_block_hash', handler.atomicals_block_hash)
                     app.router.add_post('/proxy/blockchain.atomicals.get_block_txs', handler.atomicals_block_txs)
                     app.router.add_post('/proxy/blockchain.atomicals.dump', handler.atomicals_dump)
                     app.router.add_post('/proxy/blockchain.atomicals.at_location', handler.atomicals_at_location)
@@ -1017,7 +1009,7 @@ class SessionManager:
         if isinstance(result, Exception):
             raise result
         return result, cost
-    
+
     async def get_history_op(self, hashX, limit=10, offset=0, op=None, reverse=True):
         history_data = self._history_op_cache.get(hashX, [])
         if not history_data:
@@ -1039,24 +1031,255 @@ class SessionManager:
             history_data.sort(key=lambda x: x['tx_num'], reverse=reverse)
         if op:
             history_data = list(filter(lambda x: x["op"] == op, history_data))
+        else:
+            history_data = list(filter(lambda x: x["op"], history_data))
         return history_data[offset:limit+offset], len(history_data)
+
+    # Analysis the transaction detail by txid.
+    # See BlockProcessor.op_list for the complete op list.
+    async def get_transaction_detail(self, txid: str, height=None, tx_num=-1):
+        tx_hash = hex_str_to_hash(txid)
+        res = self._tx_detail_cache.get(tx_hash)
+        if res:
+            # txid maybe the same, this key should add height add key prefix
+            self.logger.debug(f"read transation detail from cache {txid}")
+            return res
+        if not height:
+            tx_num, height = self.db.get_tx_num_height_from_tx_hash(tx_hash)
+
+        raw_tx = self.db.get_raw_tx_by_tx_hash(tx_hash)
+        if not raw_tx:
+            raw_tx = await self.daemon_request('getrawtransaction', txid, False)
+            raw_tx = bytes.fromhex(raw_tx)
+        tx, _tx_hash = self.env.coin.DESERIALIZER(raw_tx, 0).read_tx_and_hash()
+        assert tx_hash == _tx_hash
+        ops = self.db.get_op_by_tx_num(tx_num)
+        op_raw = self.bp.op_list_vk[ops[0]] if ops else ""
+
+        operation_found_at_inputs = parse_protocols_operations_from_witness_array(tx, tx_hash, True)
+        atomicals_spent_at_inputs = self.bp.build_atomicals_spent_at_inputs_for_validation_only(tx)
+        atomicals_receive_at_outputs = self.bp.build_atomicals_receive_at_ouutput_for_validation_only(tx, tx_hash)
+        blueprint_builder = AtomicalsTransferBlueprintBuilder(
+            self.logger,
+            atomicals_spent_at_inputs,
+            operation_found_at_inputs,
+            tx_hash,
+            tx,
+            self.bp.get_atomicals_id_mint_info,
+            True
+        )
+        is_burned = blueprint_builder.are_fts_burned
+        is_cleanly_assigned = blueprint_builder.cleanly_assigned
+        # format burned_fts
+        raw_burned_fts = blueprint_builder.get_fts_burned()
+        burned_fts = {}
+        for ft_key, ft_value in raw_burned_fts.items():
+            burned_fts[location_id_bytes_to_compact(ft_key)] = ft_value
+
+        res = {
+            "txid": txid,
+            "height": height,
+            "tx_num": tx_num,
+            "info": {},
+            "transfers": {
+                "inputs": {},
+                "outputs": {},
+                "is_burned": is_burned,
+                "burned_fts": burned_fts,
+                "is_cleanly_assigned": is_cleanly_assigned
+            }
+        }
+        operation_type = operation_found_at_inputs.get("op", "") if operation_found_at_inputs else ""
+        if operation_found_at_inputs:
+            payload = operation_found_at_inputs.get("payload")
+            payload_not_none = payload or {}
+            res["info"]["payload"] = payload_not_none
+            if blueprint_builder.is_mint and operation_type in ["dmt", "ft"]:
+                expected_output_index = 0
+                txout = tx.outputs[expected_output_index]
+                location = tx_hash + util.pack_le_uint32(expected_output_index)
+                # if save into the db, it means mint success
+                has_atomicals = self.db.get_atomicals_by_location_long_form(location)
+                if len(has_atomicals):
+                    ticker_name = payload_not_none.get("args", {}).get("mint_ticker", "")
+                    status, candidate_atomical_id, _ = self.bp.get_effective_ticker(ticker_name, self.bp.height)
+                    if status:
+                        atomical_id = location_id_bytes_to_compact(candidate_atomical_id)
+                        res["info"] = {
+                            "atomical_id": atomical_id,
+                            "location_id": location_id_bytes_to_compact(location),
+                            "payload": payload,
+                            "outputs": {
+                                expected_output_index: [{
+                                    "address": get_address_from_output_script(txout.pk_script),
+                                    "atomical_id": atomical_id,
+                                    "type": "FT",
+                                    "index": expected_output_index,
+                                    "value": txout.value
+                                }]
+                            }
+                        }
+            elif operation_type == "nft":
+                if atomicals_receive_at_outputs:
+                    expected_output_index = 0
+                    location = tx_hash + util.pack_le_uint32(expected_output_index)
+                    txout = tx.outputs[expected_output_index]
+                    atomical_id = location_id_bytes_to_compact(
+                        atomicals_receive_at_outputs[expected_output_index][-1]["atomical_id"]
+                    )
+                    res["info"] = {
+                        "atomical_id": atomical_id,
+                        "location_id": location_id_bytes_to_compact(location),
+                        "payload": payload,
+                        "outputs": {
+                            expected_output_index: [{
+                                "address": get_address_from_output_script(txout.pk_script),
+                                "atomical_id": atomical_id,
+                                "type": "NFT",
+                                "index": expected_output_index,
+                                "value": txout.value
+                            }]
+                        }
+                    }
+        # no operation_found_at_inputs, it will be transfer.
+        if blueprint_builder.ft_atomicals and atomicals_spent_at_inputs:
+            if not operation_type and not op_raw:
+                op_raw = "transfer"
+            for atomical_id, input_ft in blueprint_builder.ft_atomicals.items():
+                compact_atomical_id = location_id_bytes_to_compact(atomical_id)
+                for i in input_ft.input_indexes:
+                    prev_txid = hash_to_hex_str(tx.inputs[i.txin_index].prev_hash)
+                    prev_raw_tx = self.db.get_raw_tx_by_tx_hash(hex_str_to_hash(prev_txid))
+                    if not prev_raw_tx:
+                        prev_raw_tx = await self.daemon_request('getrawtransaction', prev_txid, False)
+                        prev_raw_tx = bytes.fromhex(prev_raw_tx)
+                        self.bp.general_data_cache[b'rtx' + hex_str_to_hash(prev_txid)] = prev_raw_tx
+                    prev_tx, _ = self.env.coin.DESERIALIZER(prev_raw_tx, 0).read_tx_and_hash()
+                    ft_data = {
+                        "address": get_address_from_output_script(prev_tx.outputs[tx.inputs[i.txin_index].prev_idx].pk_script),
+                        "atomical_id": compact_atomical_id,
+                        "type": "FT",
+                        "index": i.txin_index,
+                        "value": prev_tx.outputs[tx.inputs[i.txin_index].prev_idx].value
+                    }
+                    if i.txin_index not in res["transfers"]["inputs"]:
+                        res["transfers"]["inputs"][i.txin_index] = [ft_data]
+                    else:
+                        res["transfers"]["inputs"][i.txin_index].append(ft_data)
+            for k, v in blueprint_builder.ft_output_blueprint.outputs.items():
+                for atomical_id, output_ft in v['atomicals'].items():
+                    compact_atomical_id = location_id_bytes_to_compact(atomical_id)
+                    ft_data = {
+                        "address": get_address_from_output_script(tx.outputs[k].pk_script),
+                        "atomical_id": compact_atomical_id,
+                        "type": "FT",
+                        "index": k,
+                        "value": output_ft.satvalue
+                    }
+                    if k not in res["transfers"]["outputs"]:
+                        res["transfers"]["outputs"][k] = [ft_data]
+                    else:
+                        res["transfers"]["outputs"][k].append(ft_data)
+        if blueprint_builder.nft_atomicals and atomicals_spent_at_inputs:
+            if not operation_type and not op_raw:
+                op_raw = "transfer"
+            for atomical_id, input_nft in blueprint_builder.nft_atomicals.items():
+                compact_atomical_id = location_id_bytes_to_compact(atomical_id)
+                for i in input_nft.input_indexes:
+                    prev_txid = hash_to_hex_str(tx.inputs[i.txin_index].prev_hash)
+                    prev_raw_tx = self.db.get_raw_tx_by_tx_hash(hex_str_to_hash(prev_txid))
+                    if not prev_raw_tx:
+                        prev_raw_tx = await self.daemon_request('getrawtransaction', prev_txid, False)
+                        prev_raw_tx = bytes.fromhex(prev_raw_tx)
+                        self.bp.general_data_cache[b'rtx' + hex_str_to_hash(prev_txid)] = prev_raw_tx
+                    prev_tx, _ = self.env.coin.DESERIALIZER(prev_raw_tx, 0).read_tx_and_hash()
+                    nft_data = {
+                        "address": get_address_from_output_script(prev_tx.outputs[tx.inputs[i.txin_index].prev_idx].pk_script),
+                        "atomical_id": compact_atomical_id,
+                        "type": "NFT",
+                        "index": i.txin_index,
+                        "value": prev_tx.outputs[tx.inputs[i.txin_index].prev_idx].value
+                    }
+                    if i.txin_index not in res["transfers"]["inputs"]:
+                        res["transfers"]["inputs"][i.txin_index] = [nft_data]
+                    else:
+                        res["transfers"]["inputs"][i.txin_index].append(nft_data)
+            for k, v in blueprint_builder.nft_output_blueprint.outputs.items():
+                for atomical_id, output_nft in v['atomicals'].items():
+                    compact_atomical_id = location_id_bytes_to_compact(atomical_id)
+                    nft_data = {
+                        "address": get_address_from_output_script(tx.outputs[k].pk_script),
+                        "atomical_id": compact_atomical_id,
+                        "type": output_nft.type,
+                        "index": k,
+                        "value": output_nft.total_satsvalue
+                    }
+                    if k not in res["transfers"]["outputs"]:
+                        res["transfers"]["outputs"][k] = [nft_data]
+                    else:
+                        res["transfers"]["outputs"][k].append(nft_data)
+
+        atomical_id_for_payment, payment_marker_idx, _ = AtomicalsTransferBlueprintBuilder.get_atomical_id_for_payment_marker_if_found(tx)
+        if atomical_id_for_payment:
+            res["info"]["payment"] = {
+                "atomical_id": location_id_bytes_to_compact(atomical_id_for_payment),
+                "payment_marker_idx": payment_marker_idx
+            }
+
+        if op_raw and height:
+            self._tx_detail_cache[tx_hash] = res
+        res["op"] = op_raw
+
+        # Recursively encode the result.
+        return auto_encode_bytes_elements(res)
+
+    async def transaction_global(
+            self,
+            limit: int = 10,
+            offset: int = 0,
+            op_type: Optional[str] = None,
+            reverse: bool = True
+    ):
+        height = self.bp.height
+        res = []
+        count = 0
+        history_list = []
+        for current_height in range(height, self.env.coin.ATOMICALS_ACTIVATION_HEIGHT, -1):
+            txs = self.db.get_atomicals_block_txs(current_height)
+            for tx in txs:
+                tx_num, _ = self.db.get_tx_num_height_from_tx_hash(hex_str_to_hash(tx))
+                history_list.append({
+                    "tx_num": tx_num,
+                    "tx_hash": tx,
+                    "height": current_height
+                })
+                count += 1
+            if count >= offset + limit:
+                break
+        history_list.sort(key=lambda x: x['tx_num'], reverse=reverse)
+
+        for history in history_list:
+            data = await self.get_transaction_detail(history["tx_hash"], history["height"], history["tx_num"])
+            if (op_type and op_type == data["op"]) or (not op_type and data["op"]):
+                res.append(data)
+        total = len(res)
+        return {"result": res[offset:offset+limit], "total": total, "limit": limit, "offset": offset}
 
     async def _notify_sessions(self, height, touched):
         '''Notify sessions about height changes and touched addresses.'''
         height_changed = height != self.notified_height
         if height_changed:
             await self._refresh_hsub_results(height)
-            # Invalidate our history cache for touched hashXs
-            cache = self._history_cache
+            # Invalidate all history caches since they rely on block heights
+            self._history_cache.clear()
+            # Invalidate our op cache for touched hashXs
             op_cache = self._history_op_cache
-            for hashX in set(cache).intersection(touched):
-                del cache[hashX]
             for hashX in set(op_cache).intersection(touched):
-                del op_cache[hashX]
-                if self.notified_height == await self.daemon.height():
-                    time.sleep(20)
-                    background_task = asyncio.create_task(self.get_history_op(hashX, 10, 0, None, False))
-                    await background_task
+                op_cache.pop(hashX, None)
+                self.logger.info(f"refresh op cache {self.notified_height}")
+                time.sleep(2)
+                background_task = asyncio.create_task(self.get_history_op(hashX, 10, 0, None, True))
+                await background_task
 
         for session in self.sessions:
             if self._task_group.joined:  # this can happen during shutdown
@@ -1192,14 +1415,18 @@ class SessionBase(RPCSession):
         return 0
 
     async def handle_request(self, request):
-        '''Handle an incoming request.  ElectrumX doesn't receive
+        """Handle an incoming request.  ElectrumX doesn't receive
         notifications from client sessions.
-        '''
+        """
         if isinstance(request, Request):
             handler = self.request_handlers.get(request.method)
+            method = request.method
+            args = request.args
         else:
             handler = None
-        method = 'invalid method' if handler is None else request.method
+            method = 'invalid method'
+            args = None
+        self.logger.debug(f'Session request handling: [method] {method}, [args] {args}')
 
         # If DROP_CLIENT_UNKNOWN is enabled, check if the client identified
         # by calling server.version previously. If not, disconnect the session
@@ -1338,8 +1565,9 @@ class ElectrumX(SessionBase):
 
     async def headers_subscribe(self):
         '''Subscribe to get raw headers of new blocks.'''
-        self.subscribe_headers = True
-        self.bump_cost(0.25)
+        if not self.subscribe_headers:
+            self.subscribe_headers = True
+            self.bump_cost(0.25)
         return await self.subscribe_headers_result()
 
     async def add_peer(self, features):
@@ -1408,21 +1636,21 @@ class ElectrumX(SessionBase):
                 continue
             atomicals = self.db.get_atomicals_by_utxo(utxo, True)
             atomicals_basic_infos = []
-            for atomical_id in atomicals: 
+            for atomical_id in atomicals:
                 # This call is efficient in that it's cached underneath
                 # For now we only show the atomical id because it can always be fetched separately and it will be more efficient
-                atomical_basic_info = await self.session_mgr.bp.get_base_mint_info_rpc_format_by_atomical_id(atomical_id) 
-                # Todo need to combine mempool atomicals 
+                atomical_basic_info = await self.session_mgr.bp.get_base_mint_info_rpc_format_by_atomical_id(atomical_id)
+                # Todo need to combine mempool atomicals
                 atomical_id_compact = location_id_bytes_to_compact(atomical_id)
                 atomicals_basic_infos.append(atomical_id_compact)
-            
+
             returned_utxos.append({
                 'txid': hash_to_hex_str(utxo.tx_hash),
                 'tx_hash': hash_to_hex_str(utxo.tx_hash),
                 'index': utxo.tx_pos,
                 'tx_pos': utxo.tx_pos,
                 'vout': utxo.tx_pos,
-                'height': utxo.height, 
+                'height': utxo.height,
                 'value': utxo.value,
                 'atomicals': atomicals_basic_infos
             })
@@ -1440,25 +1668,25 @@ class ElectrumX(SessionBase):
             return atomical
         # Check mempool
         atomical_in_mempool = await self.mempool.get_atomical_mint(atomical_id)
-        if atomical_in_mempool == None: 
+        if atomical_in_mempool == None:
             raise RPCError(BAD_REQUEST, f'"{compact_atomical_id}" is not found')
         return atomical_in_mempool
-    
+
     async def atomical_id_get_ft_info(self, compact_atomical_id):
         atomical_id = compact_to_location_id_bytes(compact_atomical_id)
         atomical = await self.session_mgr.bp.get_base_mint_info_rpc_format_by_atomical_id(atomical_id)
         if atomical['subtype'] == 'decentralized':
             atomical = await self.session_mgr.bp.get_dft_mint_info_rpc_format_by_atomical_id(atomical_id)
-        elif atomical['subtype'] == 'direct': 
+        elif atomical['subtype'] == 'direct':
             atomical = await self.session_mgr.bp.get_ft_mint_info_rpc_format_by_atomical_id(atomical_id)
-        else: 
+        else:
             raise RPCError(BAD_REQUEST, f'"{compact_atomical_id}" is not a fungible token (FT)')
-        
+
         if atomical:
             return atomical
         # Check mempool
         atomical_in_mempool = await self.mempool.get_atomical_mint(atomical_id)
-        if atomical_in_mempool == None: 
+        if atomical_in_mempool == None:
             raise RPCError(BAD_REQUEST, f'"{compact_atomical_id}" is not found')
         return atomical_in_mempool
 
@@ -1467,7 +1695,7 @@ class ElectrumX(SessionBase):
         atomical = await self.atomical_id_get(compact_atomical_id)
         height = self.session_mgr.bp.height
         self.db.populate_extended_mod_state_latest_atomical_info(atomical_id, atomical, height)
-        await self.db.populate_extended_location_atomical_info(atomical_id, atomical)  
+        await self.db.populate_extended_location_atomical_info(atomical_id, atomical)
         return atomical
 
     async def atomical_id_get_state_history(self, compact_atomical_id):
@@ -1475,17 +1703,17 @@ class ElectrumX(SessionBase):
         atomical = await self.atomical_id_get(compact_atomical_id)
         height = self.session_mgr.bp.height
         self.db.populate_extended_mod_state_history_atomical_info(atomical_id, atomical, height)
-        await self.db.populate_extended_location_atomical_info(atomical_id, atomical)  
+        await self.db.populate_extended_location_atomical_info(atomical_id, atomical)
         return atomical
- 
+
     async def atomical_id_get_events(self, compact_atomical_id):
         atomical_id = compact_to_location_id_bytes(compact_atomical_id)
         atomical = await self.atomical_id_get(compact_atomical_id)
         height = self.session_mgr.bp.height
         self.db.populate_extended_events_atomical_info(atomical_id, atomical, height)
-        await self.db.populate_extended_location_atomical_info(atomical_id, atomical)  
+        await self.db.populate_extended_location_atomical_info(atomical_id, atomical)
         return atomical
- 
+
     async def atomical_id_get_tx_history(self, compact_atomical_id):
         atomical_id = compact_to_location_id_bytes(compact_atomical_id)
         atomical = await self.atomical_id_get(compact_atomical_id)
@@ -1532,7 +1760,7 @@ class ElectrumX(SessionBase):
     async def atomicals_list_get(self, limit, offset, asc):
         atomicals = await self.db.get_atomicals_list(limit, offset, asc)
         atomicals_populated = []
-        for atomical_id in atomicals: 
+        for atomical_id in atomicals:
             atomical = await self.atomical_id_get(location_id_bytes_to_compact(atomical_id))
             atomicals_populated.append(atomical)
         return {'global': await self.get_summary_info(), 'result': atomicals_populated }
@@ -1540,9 +1768,15 @@ class ElectrumX(SessionBase):
     async def atomicals_num_to_id(self, limit, offset, asc):
         atomicals_num_to_id_map = await self.db.get_num_to_id(limit, offset, asc)
         atomicals_num_to_id_map_reformatted = {}
-        for num, id in atomicals_num_to_id_map.items(): 
+        for num, id in atomicals_num_to_id_map.items():
             atomicals_num_to_id_map_reformatted[num] = location_id_bytes_to_compact(id)
         return {'global': await self.get_summary_info(), 'result': atomicals_num_to_id_map_reformatted }
+
+    async def atomicals_block_hash(self, height):
+        if not height:
+            height = self.session_mgr.bp.height
+        block_hash = self.db.get_atomicals_block_hash(height)
+        return {'result': block_hash}
 
     async def atomicals_block_txs(self, height):
         tx_list = self.session_mgr.bp.get_atomicals_block_txs(height)
@@ -1583,7 +1817,7 @@ class ElectrumX(SessionBase):
         conf = [{'tx_hash': hash_to_hex_str(tx_hash), 'height': height}
                 for tx_hash, height in history]
         return conf + await self.unconfirmed_history(hashX)
-    
+
     async def atomicals_listscripthash(self, scripthash, Verbose=False):
         '''Return the list of Atomical UTXOs for an address'''
         hashX = scripthash_to_hashX(scripthash)
@@ -1595,42 +1829,42 @@ class ElectrumX(SessionBase):
 
     async def atomicals_get(self, compact_atomical_id_or_atomical_number):
         compact_atomical_id = self.atomical_resolve_id(compact_atomical_id_or_atomical_number)
-        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get(compact_atomical_id)} 
+        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get(compact_atomical_id)}
 
     async def atomicals_dump(self):
         if True:
             self.db.dump()
-            return {'result': True} 
-        else: 
-            return {'result': False} 
+            return {'result': True}
+        else:
+            return {'result': False}
 
     async def atomicals_get_dft_mints(self, compact_atomical_id, limit=100, offset=0):
         atomical_id = compact_to_location_id_bytes(compact_atomical_id)
         entries = self.session_mgr.bp.get_distmints_by_atomical_id(atomical_id, limit, offset)
-        return {'global': await self.get_summary_info(), 'result': entries} 
-    
+        return {'global': await self.get_summary_info(), 'result': entries}
+
     async def atomicals_get_ft_info(self, compact_atomical_id_or_atomical_number):
         compact_atomical_id = self.atomical_resolve_id(compact_atomical_id_or_atomical_number)
-        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get_ft_info(compact_atomical_id)} 
+        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get_ft_info(compact_atomical_id)}
 
     async def atomicals_get_global(self, hashes=10):
-        return {'global': await self.get_summary_info(hashes)} 
+        return {'global': await self.get_summary_info(hashes)}
 
     async def atomicals_get_location(self, compact_atomical_id_or_atomical_number):
         compact_atomical_id = self.atomical_resolve_id(compact_atomical_id_or_atomical_number)
-        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get_location(compact_atomical_id)} 
- 
+        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get_location(compact_atomical_id)}
+
     async def atomical_get_state(self, compact_atomical_id_or_atomical_number, Verbose=False):
         compact_atomical_id = self.atomical_resolve_id(compact_atomical_id_or_atomical_number)
-        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get_state(compact_atomical_id, Verbose)} 
-    
+        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get_state(compact_atomical_id, Verbose)}
+
     async def atomical_get_state_history(self, compact_atomical_id_or_atomical_number):
         compact_atomical_id = self.atomical_resolve_id(compact_atomical_id_or_atomical_number)
-        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get_state_history(compact_atomical_id)} 
+        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get_state_history(compact_atomical_id)}
 
     async def atomical_get_events(self, compact_atomical_id_or_atomical_number):
         compact_atomical_id = self.atomical_resolve_id(compact_atomical_id_or_atomical_number)
-        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get_events(compact_atomical_id)} 
+        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get_events(compact_atomical_id)}
 
     def atomical_resolve_id(self, compact_atomical_id_or_atomical_number):
         compact_atomical_id = compact_atomical_id_or_atomical_number
@@ -1653,25 +1887,25 @@ class ElectrumX(SessionBase):
             assert_atomical_id(compact_atomical_id)
         else:
             compact_atomical_id = location_id_bytes_to_compact(self.get_atomical_id_by_atomical_number(compact_atomical_id_or_atomical_number))
-        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get_tx_history(compact_atomical_id)} 
+        return {'global': await self.get_summary_info(), 'result': await self.atomical_id_get_tx_history(compact_atomical_id)}
 
     async def atomicals_get_by_ticker(self, ticker):
         height = self.session_mgr.bp.height
         status, candidate_atomical_id, all_entries = self.session_mgr.bp.get_effective_ticker(ticker, height)
         formatted_entries = format_name_type_candidates_to_rpc(all_entries, self.session_mgr.bp.build_atomical_id_to_candidate_map(all_entries))
-        
+
         if candidate_atomical_id:
             candidate_atomical_id = location_id_bytes_to_compact(candidate_atomical_id)
-        
+
         found_atomical_id = None
         if status == 'verified':
             found_atomical_id = candidate_atomical_id
-        
+
         return_result = {
-            'status': status, 
-            'candidate_atomical_id': candidate_atomical_id, 
-            'atomical_id': found_atomical_id, 
-            'candidates': formatted_entries, 
+            'status': status,
+            'candidate_atomical_id': candidate_atomical_id,
+            'atomical_id': found_atomical_id,
+            'candidates': formatted_entries,
             'type': 'ticker'
         }
         return {
@@ -1683,19 +1917,19 @@ class ElectrumX(SessionBase):
         height = self.session_mgr.bp.height
         status, candidate_atomical_id, all_entries = self.session_mgr.bp.get_effective_container(container, height)
         formatted_entries = format_name_type_candidates_to_rpc(all_entries, self.session_mgr.bp.build_atomical_id_to_candidate_map(all_entries))
-        
+
         if candidate_atomical_id:
             candidate_atomical_id = location_id_bytes_to_compact(candidate_atomical_id)
-        
+
         found_atomical_id = None
         if status == 'verified':
             found_atomical_id = candidate_atomical_id
-        
+
         return_result = {
-            'status': status, 
-            'candidate_atomical_id': candidate_atomical_id, 
-            'atomical_id': found_atomical_id, 
-            'candidates': formatted_entries, 
+            'status': status,
+            'candidate_atomical_id': candidate_atomical_id,
+            'atomical_id': found_atomical_id,
+            'candidates': formatted_entries,
             'type': 'container'
         }
         return {
@@ -1706,7 +1940,7 @@ class ElectrumX(SessionBase):
         if not items or not isinstance(items, dict):
             return {}
         for item, value in items.items():
-            provided_id = value.get('id') 
+            provided_id = value.get('id')
             value['status'] = 'verified'
             if provided_id and isinstance(provided_id, bytes) and len(provided_id) == 36:
                 value['$id'] = location_id_bytes_to_compact(provided_id)
@@ -1716,7 +1950,7 @@ class ElectrumX(SessionBase):
         if not items or not isinstance(items, dict):
             return {}
         for item, value in items.items():
-            provided_id = value.get('id') 
+            provided_id = value.get('id')
             if provided_id and isinstance(provided_id, bytes) and len(provided_id) == 36:
                 value['$id'] = location_id_bytes_to_compact(provided_id)
         return auto_encode_bytes_elements(items)
@@ -1728,7 +1962,7 @@ class ElectrumX(SessionBase):
         found_atomical_id = None
         if status == 'verified':
             found_atomical_id = candidate_atomical_id
-        else: 
+        else:
             raise RPCError(BAD_REQUEST, f'Container not found')
 
         compact_atomical_id = location_id_bytes_to_compact(found_atomical_id)
@@ -1754,7 +1988,7 @@ class ElectrumX(SessionBase):
                     }
                 }
             }
-        else: 
+        else:
             container_mod_history = self.session_mgr.bp.get_mod_history(found_atomical_id, self.session_mgr.bp.height)
             current_height_latest_state = calculate_latest_state_from_mod_history(container_mod_history)
             items = current_height_latest_state.get('items', [])
@@ -1779,7 +2013,7 @@ class ElectrumX(SessionBase):
         formatted_entries = format_name_type_candidates_to_rpc(all_entries, self.session_mgr.bp.build_atomical_id_to_candidate_map(all_entries))
         if status == 'verified':
             found_atomical_id = candidate_atomical_id
-        else: 
+        else:
             self.logger.info(f'formatted_entries {formatted_entries}')
             raise RPCError(BAD_REQUEST, f'Container does not exist')
         status, candidate_atomical_id, all_entries = self.session_mgr.bp.get_effective_dmitem(found_atomical_id, item_name, height)
@@ -1790,16 +2024,16 @@ class ElectrumX(SessionBase):
         if status == 'verified':
             found_item_atomical_id = candidate_atomical_id
         return_result = {
-            'status': status, 
-            'candidate_atomical_id': candidate_atomical_id, 
-            'atomical_id': found_item_atomical_id, 
-            'candidates': formatted_entries, 
+            'status': status,
+            'candidate_atomical_id': candidate_atomical_id,
+            'atomical_id': found_item_atomical_id,
+            'candidates': formatted_entries,
             'type': 'item'
         }
         return {
             'result': return_result
         }
-    
+
     async def atomicals_get_by_container_item_validation(self, container, item_name, bitworkc, bitworkr, main_name, main_hash, proof, check_without_sealed):
         if not isinstance(container, str):
             raise RPCError(BAD_REQUEST, f'empty container')
@@ -1809,7 +2043,7 @@ class ElectrumX(SessionBase):
         formatted_entries = format_name_type_candidates_to_rpc(all_entries, self.session_mgr.bp.build_atomical_id_to_candidate_map(all_entries))
         if status == 'verified':
             found_parent_atomical_id = candidate_atomical_id
-        else: 
+        else:
             raise RPCError(BAD_REQUEST, f'Container does not exist')
         compact_atomical_id = location_id_bytes_to_compact(found_parent_atomical_id)
         container_info = await self.atomical_id_get(compact_atomical_id)
@@ -1821,7 +2055,7 @@ class ElectrumX(SessionBase):
         if container_dmint_status.get('status') != 'valid':
             errors = container_dmint_status.get('errors')
             if check_without_sealed and errors and len(errors) == 1 and errors[0] == 'container not sealed':
-                pass 
+                pass
             else:
                 raise RPCError(BAD_REQUEST, f'Container dmint status is invalid')
 
@@ -1836,18 +2070,18 @@ class ElectrumX(SessionBase):
 
         # validate the proof data nonetheless
         if not proof or not isinstance(proof, list) or len(proof) == 0:
-            raise RPCError(BAD_REQUEST, f'Proof must be provided')    
-        
+            raise RPCError(BAD_REQUEST, f'Proof must be provided')
+
         applicable_rule, state_at_height = self.session_mgr.bp.get_applicable_rule_by_height(found_parent_atomical_id, item_name, height - MINT_SUBNAME_RULES_BECOME_EFFECTIVE_IN_BLOCKS, DMINT_PATH)
         proof_valid, target_vector, target_hash = validate_merkle_proof_dmint(dmint['merkle'], item_name, bitworkc, bitworkr, main_name, main_hash, proof)
         if applicable_rule and applicable_rule.get('matched_rule'):
             applicable_rule = applicable_rule.get('matched_rule')
-        
+
         return_result = {
-            'status': status, 
-            'candidate_atomical_id': candidate_atomical_id, 
-            'atomical_id': found_item_atomical_id, 
-            'candidates': formatted_entries, 
+            'status': status,
+            'candidate_atomical_id': candidate_atomical_id,
+            'atomical_id': found_item_atomical_id,
+            'candidates': formatted_entries,
             'type': 'item',
             'applicable_rule': applicable_rule,
             'proof_valid': proof_valid,
@@ -1863,19 +2097,19 @@ class ElectrumX(SessionBase):
         height = self.session_mgr.bp.height
         status, candidate_atomical_id, all_entries = self.session_mgr.bp.get_effective_realm(name, height)
         formatted_entries = format_name_type_candidates_to_rpc(all_entries, self.session_mgr.bp.build_atomical_id_to_candidate_map(all_entries))
-        
+
         if candidate_atomical_id:
             candidate_atomical_id = location_id_bytes_to_compact(candidate_atomical_id)
-        
+
         found_atomical_id = None
         if status == 'verified':
             found_atomical_id = candidate_atomical_id
-        
+
         return_result = {
-            'status': status, 
-            'candidate_atomical_id': candidate_atomical_id, 
-            'atomical_id': found_atomical_id, 
-            'candidates': formatted_entries, 
+            'status': status,
+            'candidate_atomical_id': candidate_atomical_id,
+            'atomical_id': found_atomical_id,
+            'candidates': formatted_entries,
             'type': 'realm'
         }
         return {
@@ -1891,16 +2125,16 @@ class ElectrumX(SessionBase):
 
         if candidate_atomical_id:
             candidate_atomical_id = location_id_bytes_to_compact(candidate_atomical_id)
-        
+
         found_atomical_id = None
         if status == 'verified':
             found_atomical_id = candidate_atomical_id
-        
+
         return_result = {
-            'status': status, 
-            'candidate_atomical_id': candidate_atomical_id, 
-            'atomical_id': found_atomical_id, 
-            'candidates': formatted_entries, 
+            'status': status,
+            'candidate_atomical_id': candidate_atomical_id,
+            'atomical_id': found_atomical_id,
+            'candidates': formatted_entries,
             'type': 'subrealm'
         }
         return {
@@ -1916,16 +2150,16 @@ class ElectrumX(SessionBase):
 
         if candidate_atomical_id:
             candidate_atomical_id = location_id_bytes_to_compact(candidate_atomical_id)
-        
+
         found_atomical_id = None
         if status == 'verified':
             found_atomical_id = candidate_atomical_id
-        
+
         return_result = {
-            'status': status, 
-            'candidate_atomical_id': candidate_atomical_id, 
-            'atomical_id': found_atomical_id, 
-            'candidates': formatted_entries, 
+            'status': status,
+            'candidate_atomical_id': candidate_atomical_id,
+            'atomical_id': found_atomical_id,
+            'candidates': formatted_entries,
             'type': 'dmitem'
         }
         return {
@@ -1948,7 +2182,7 @@ class ElectrumX(SessionBase):
         for name_part in split_names:
             if level == 0:
                 realm_status, last_found_realm, latest_all_entries_candidates = self.session_mgr.bp.get_effective_realm(name_part, height)
-            else: 
+            else:
                 self.logger.info(f'atomicals_get_realm_info {last_found_realm} {name_part}')
                 realm_status, last_found_realm, latest_all_entries_candidates = self.session_mgr.bp.get_effective_subrealm(last_found_realm, name_part, height)
             # stops when it does not found the realm component
@@ -1976,18 +2210,18 @@ class ElectrumX(SessionBase):
         realms_path_len = len(realms_path)
         if realms_path_len == 0:
             return {'result': {
-                    'atomical_id': None, 
-                    'top_level_realm_atomical_id': None, 
-                    'top_level_realm_name': None, 
-                    'nearest_parent_realm_atomical_id': None, 
-                    'nearest_parent_realm_name': None, 
-                    'request_full_realm_name': full_name, 
-                    'found_full_realm_name': None, 
+                    'atomical_id': None,
+                    'top_level_realm_atomical_id': None,
+                    'top_level_realm_name': None,
+                    'nearest_parent_realm_atomical_id': None,
+                    'nearest_parent_realm_name': None,
+                    'request_full_realm_name': full_name,
+                    'found_full_realm_name': None,
                     'missing_name_parts': full_name,
                     'candidates': format_name_type_candidates_to_rpc(latest_all_entries_candidates, self.session_mgr.bp.build_atomical_id_to_candidate_map(latest_all_entries_candidates)) }
                 }
         # Populate the subrealm minting rules for a parent atomical
-        that = self 
+        that = self
         def populate_rules_response_struct(parent_atomical_id, struct_to_populate, Verbose):
             current_height = that.session_mgr.bp.height
             subrealm_mint_mod_history = that.session_mgr.bp.get_mod_history(parent_atomical_id, current_height)
@@ -2010,7 +2244,7 @@ class ElectrumX(SessionBase):
         #
         # The number of realms returned and name components is equal, therefore the subrealm was found correctly
         if realms_path_len == total_name_parts:
-            nearest_parent_realm_atomical_id = None 
+            nearest_parent_realm_atomical_id = None
             nearest_parent_realm_name = None
             top_level_realm = realms_path[0]['atomical_id']
             top_level_realm_name = realms_path[0]['name_part']
@@ -2023,10 +2257,10 @@ class ElectrumX(SessionBase):
             final_subrealm_name = split_names[-1]
             applicable_rule_map = self.session_mgr.bp.build_applicable_rule_map(latest_all_entries_candidates, compact_to_location_id_bytes(nearest_parent_realm_atomical_id), final_subrealm_name)
             return_struct = {
-                'atomical_id': realms_path[-1]['atomical_id'], 
-                'top_level_realm_atomical_id': top_level_realm, 
-                'top_level_realm_name': top_level_realm_name, 
-                'nearest_parent_realm_atomical_id': nearest_parent_realm_atomical_id, 
+                'atomical_id': realms_path[-1]['atomical_id'],
+                'top_level_realm_atomical_id': top_level_realm,
+                'top_level_realm_name': top_level_realm_name,
+                'nearest_parent_realm_atomical_id': nearest_parent_realm_atomical_id,
                 'nearest_parent_realm_name': nearest_parent_realm_name,
                 'request_full_realm_name': full_name,
                 'found_full_realm_name': joined_name,
@@ -2035,12 +2269,12 @@ class ElectrumX(SessionBase):
             }
             populate_rules_response_struct(compact_to_location_id_bytes(nearest_parent_realm_atomical_id), return_struct, Verbose)
             return {'result': return_struct}
-        
+
         # The number of realms and components do not match, that is because at least the top level realm or intermediate subrealm was found
         # But the final subrealm does not exist yet
         # if realms_path_len < total_name_parts:
         # It is known if we got this far that realms_path_len < total_name_parts
-        nearest_parent_realm_atomical_id = None 
+        nearest_parent_realm_atomical_id = None
         nearest_parent_realm_name = None
         top_level_realm = realms_path[0]['atomical_id']
         top_level_realm_name = realms_path[0]['name_part']
@@ -2055,10 +2289,10 @@ class ElectrumX(SessionBase):
         final_subrealm_name = split_names[-1]
         applicable_rule_map = self.session_mgr.bp.build_applicable_rule_map(latest_all_entries_candidates, compact_to_location_id_bytes(nearest_parent_realm_atomical_id), final_subrealm_name)
         return_struct = {
-            'atomical_id': None, 
-            'top_level_realm_atomical_id': top_level_realm, 
-            'top_level_realm_name': top_level_realm_name, 
-            'nearest_parent_realm_atomical_id': nearest_parent_realm_atomical_id, 
+            'atomical_id': None,
+            'top_level_realm_atomical_id': top_level_realm,
+            'top_level_realm_name': top_level_realm_name,
+            'nearest_parent_realm_atomical_id': nearest_parent_realm_atomical_id,
             'nearest_parent_realm_name': nearest_parent_realm_name,
             'request_full_realm_name': full_name,
             'found_full_realm_name': joined_name,
@@ -2070,7 +2304,7 @@ class ElectrumX(SessionBase):
             populate_rules_response_struct(compact_to_location_id_bytes(nearest_parent_realm_atomical_id), return_struct, Verbose)
         return {'result': return_struct}
 
-    # Perform a search for tickers, containers, and realms  
+    # Perform a search for tickers, containers, and realms
     def atomicals_search_name_template(self, db_prefix, name_type_str, parent_prefix=None, prefix=None, Reverse=False, Limit=1000, Offset=0, is_verified_only=False):
         db_entries = self.db.get_name_entries_template_limited(db_prefix, parent_prefix, prefix, Reverse, Limit, Offset)
         formatted_results = []
@@ -2111,12 +2345,12 @@ class ElectrumX(SessionBase):
         if isinstance(prefix, str):
             prefix = prefix.encode()
         return self.atomicals_search_name_template(b'srlm', 'subrealm', parent_realm_id_long_form, prefix, Reverse, Limit, Offset, is_verified_only)
-    
+
     async def atomicals_search_containers(self, prefix=None, Reverse=False, Limit=100, Offset=0, is_verified_only=False):
         if isinstance(prefix, str):
             prefix = prefix.encode()
         return self.atomicals_search_name_template(b'co', 'collection', None, prefix, Reverse, Limit, Offset, is_verified_only)
- 
+
     async def atomicals_at_location(self, compact_location_id):
         '''Return the Atomicals at a specific location id```
         '''
@@ -2139,7 +2373,7 @@ class ElectrumX(SessionBase):
         '''Return the NFT balances for a scripthash address'''
         hashX = scripthash_to_hashX(scripthash)
         return await self.hashX_nft_balances_atomicals(hashX)
-    
+
     async def atomicals_get_holders(self, compact_atomical_id, limit=50, offset=0):
         '''Return the holder by a specific location id```
         '''
@@ -2184,10 +2418,10 @@ class ElectrumX(SessionBase):
                 continue
             atomicals = self.db.get_atomicals_by_utxo(utxo, True)
             atomicals_basic_infos = []
-            for atomical_id in atomicals: 
+            for atomical_id in atomicals:
                 # This call is efficient in that it's cached underneath
                 # For now we only show the atomical id because it can always be fetched separately and it will be more efficient
-                atomical_basic_info = await self.session_mgr.bp.get_base_mint_info_rpc_format_by_atomical_id(atomical_id) 
+                atomical_basic_info = await self.session_mgr.bp.get_base_mint_info_rpc_format_by_atomical_id(atomical_id)
                 atomical_id_compact = location_id_bytes_to_compact(atomical_id)
                 atomicals_id_map[atomical_id_compact] = atomical_basic_info
                 atomicals_basic_infos.append(atomical_id_compact)
@@ -2202,7 +2436,7 @@ class ElectrumX(SessionBase):
         return_struct = {
             'balances': {}
         }
-        for returned_utxo in returned_utxos: 
+        for returned_utxo in returned_utxos:
             for atomical_id_entry_compact in returned_utxo['atomicals']:
                 atomical_id_basic_info = atomicals_id_map[atomical_id_entry_compact]
                 atomical_id_compact = atomical_id_basic_info['atomical_id']
@@ -2232,10 +2466,10 @@ class ElectrumX(SessionBase):
                 continue
             atomicals = self.db.get_atomicals_by_utxo(utxo, True)
             atomicals_basic_infos = []
-            for atomical_id in atomicals: 
+            for atomical_id in atomicals:
                 # This call is efficient in that it's cached underneath
                 # For now we only show the atomical id because it can always be fetched separately and it will be more efficient
-                atomical_basic_info = await self.session_mgr.bp.get_base_mint_info_rpc_format_by_atomical_id(atomical_id) 
+                atomical_basic_info = await self.session_mgr.bp.get_base_mint_info_rpc_format_by_atomical_id(atomical_id)
                 atomical_id_compact = location_id_bytes_to_compact(atomical_id)
                 atomicals_id_map[atomical_id_compact] = atomical_basic_info
                 atomicals_basic_infos.append(atomical_id_compact)
@@ -2250,7 +2484,7 @@ class ElectrumX(SessionBase):
         return_struct = {
             'balances': {}
         }
-        for returned_utxo in returned_utxos: 
+        for returned_utxo in returned_utxos:
             for atomical_id_entry_compact in returned_utxo['atomicals']:
                 atomical_id_basic_info = atomicals_id_map[atomical_id_entry_compact]
                 atomical_id_compact = atomical_id_basic_info['atomical_id']
@@ -2308,10 +2542,10 @@ class ElectrumX(SessionBase):
                 continue
             atomicals = self.db.get_atomicals_by_utxo(utxo, True)
             atomicals_basic_infos = []
-            for atomical_id in atomicals: 
+            for atomical_id in atomicals:
                 # This call is efficient in that it's cached underneath
                 # For now we only show the atomical id because it can always be fetched separately and it will be more efficient
-                atomical_basic_info = await self.session_mgr.bp.get_base_mint_info_rpc_format_by_atomical_id(atomical_id) 
+                atomical_basic_info = await self.session_mgr.bp.get_base_mint_info_rpc_format_by_atomical_id(atomical_id)
                 atomical_id_compact = location_id_bytes_to_compact(atomical_id)
                 atomicals_id_map[atomical_id_compact] = atomical_basic_info
                 atomicals_basic_infos.append(atomical_id_compact)
@@ -2319,10 +2553,10 @@ class ElectrumX(SessionBase):
                 returned_utxos.append({'txid': hash_to_hex_str(utxo.tx_hash),
                 'index': utxo.tx_pos,
                 'vout': utxo.tx_pos,
-                'height': utxo.height, 
+                'height': utxo.height,
                 'value': utxo.value,
                 'atomicals': atomicals_basic_infos})
- 
+
         # Aggregate balances
         return_struct = {
             'global': await self.get_summary_info(),
@@ -2330,11 +2564,11 @@ class ElectrumX(SessionBase):
             'utxos': returned_utxos
         }
 
-        for returned_utxo in returned_utxos: 
+        for returned_utxo in returned_utxos:
             for atomical_id_entry_compact in returned_utxo['atomicals']:
                 atomical_id_basic_info = atomicals_id_map[atomical_id_entry_compact]
                 atomical_id_ref = atomical_id_basic_info['atomical_id']
-                if return_struct['atomicals'].get(atomical_id_ref) == None: 
+                if return_struct['atomicals'].get(atomical_id_ref) == None:
                     return_struct['atomicals'][atomical_id_ref] = {
                         'atomical_id': atomical_id_ref,
                         'atomical_number': atomical_id_basic_info['atomical_number'],
@@ -2342,7 +2576,7 @@ class ElectrumX(SessionBase):
                         'confirmed': 0,
                         # 'subtype': atomical_id_basic_info.get('subtype'),
                         'data': atomical_id_basic_info
-                    } 
+                    }
                     if atomical_id_basic_info.get('$realm'):
                         return_struct['atomicals'][atomical_id_ref]['subtype'] = atomical_id_basic_info.get('subtype')
                         return_struct['atomicals'][atomical_id_ref]['request_realm_status'] = atomical_id_basic_info.get('$request_realm_status')
@@ -2402,13 +2636,13 @@ class ElectrumX(SessionBase):
                         return_struct['atomicals'][atomical_id_ref]['ticker_candidates'] = atomical_id_basic_info.get('$ticker_candidates')
                         return_struct['atomicals'][atomical_id_ref]['request_ticker_status'] =  atomical_id_basic_info.get('$request_ticker_status')
                         return_struct['atomicals'][atomical_id_ref]['request_ticker'] = atomical_id_basic_info.get('$request_ticker')
-                
+
                 if returned_utxo['height'] <= 0:
                     return_struct['atomicals'][atomical_id_ref]['unconfirmed'] += returned_utxo['value']
                 else:
                     return_struct['atomicals'][atomical_id_ref]['confirmed'] += returned_utxo['value']
-        
-        return return_struct 
+
+        return return_struct
 
     async def atomicals_get_tx(self, txids):
         return await self.atomical_get_tx(txids)
@@ -2657,7 +2891,7 @@ class ElectrumX(SessionBase):
         try:
             hex_hash = await self.session_mgr.broadcast_transaction_validated(raw_tx, False)
             return hex_hash
-        except AtomicalsValidationError as e: 
+        except AtomicalsValidationError as e:
             self.logger.info(f'error validating atomicals transaction: {e}')
             raise RPCError(ATOMICALS_INVALID_TX, 'the transaction was rejected by '
                            f'atomicals rules.\n\n{e}\n[{raw_tx}]')
@@ -2676,7 +2910,7 @@ class ElectrumX(SessionBase):
             self.logger.info(f'error sending transaction: {message}')
             raise RPCError(BAD_REQUEST, 'the transaction was rejected by '
                            f'network rules.\n\n{message}\n[{raw_tx}]')
-        except AtomicalsValidationError as e: 
+        except AtomicalsValidationError as e:
             self.logger.info(f'error validating atomicals transaction: {e}')
             raise RPCError(ATOMICALS_INVALID_TX, 'the transaction was rejected by '
                            f'atomicals rules.\n\n{e}\n[{raw_tx}]')
@@ -2777,228 +3011,10 @@ class ElectrumX(SessionBase):
     async def compact_fee_histogram(self):
         self.bump_cost(1.0)
         return await self.mempool.compact_fee_histogram()
-    
-    async def get_transaction_detail(self, txid, height=None, tx_num=-1):
-
-        tx_hash = hex_str_to_hash(txid)
-        res = self.session_mgr._tx_detail_cache.get(tx_hash)
-        if res:
-            # txid maybe the same, this key should add height add key prefix
-            self.logger.debug(f"read transation detail from cache {txid}")
-            return res
-        if not height:
-            tx_num, height = self.db.get_tx_num_height_from_tx_hash(tx_hash)
-        
-        res = {}
-        raw_tx = self.db.get_raw_tx_by_tx_hash(tx_hash)
-        if not raw_tx:
-            raw_tx = await self.daemon_request('getrawtransaction', txid, False)
-            raw_tx = bytes.fromhex(raw_tx)
-        tx, _tx_hash = self.coin.DESERIALIZER(raw_tx, 0).read_tx_and_hash()
-        assert(tx_hash == _tx_hash)
-
-        operation_found_at_inputs = parse_protocols_operations_from_witness_array(tx, tx_hash, True)
-        atomicals_spent_at_inputs = self.session_mgr.bp.build_atomicals_spent_at_inputs_for_validation_only(tx)
-        atomicals_receive_at_outputs = self.session_mgr.bp.build_atomicals_receive_at_ouutput_for_validation_only(tx, tx_hash)
-        blueprint_builder = AtomicalsTransferBlueprintBuilder(self.logger, atomicals_spent_at_inputs, operation_found_at_inputs, tx_hash, tx, self.session_mgr.bp.get_atomicals_id_mint_info, True)
-        is_burned = blueprint_builder.are_fts_burned
-        is_cleanly_assigned = blueprint_builder.cleanly_assigned
-        # format burned_fts
-        raw_burned_fts = blueprint_builder.get_fts_burned()
-        burned_fts = {}
-        for ft_key, ft_value in raw_burned_fts.items():
-            burned_fts[location_id_bytes_to_compact(ft_key)] = ft_value
-
-        res = {
-            "op": "", 
-            "txid": txid,
-            "height": height,
-            "tx_num": tx_num,
-            "info": {},
-            "transfers":{
-                "inputs": {}, 
-                "outputs": {}, 
-                "is_burned": is_burned, 
-                "burned_fts": burned_fts,
-                "is_cleanly_assigned": is_cleanly_assigned
-            }
-        }
-        if operation_found_at_inputs:
-            res["info"]["payload"] = operation_found_at_inputs.get("payload", {})
-        if blueprint_builder.is_mint and operation_found_at_inputs["op"] in ["dmt", "ft"]:
-            if operation_found_at_inputs["op"] == "dmt":
-                res["op"] = "mint-dft"
-            if operation_found_at_inputs["op"] == "ft":
-                res["op"] = "mint-ft"
-            expected_output_index = 0
-            txout = tx.outputs[expected_output_index]
-            location = tx_hash + util.pack_le_uint32(expected_output_index)
-            # if save into the db, it means mint success
-            has_atomicals = self.db.get_atomicals_by_location_long_form(location)
-            if len(has_atomicals):
-                ticker_name = operation_found_at_inputs.get("payload", {}).get("args", {}).get("mint_ticker", "")
-                status, candidate_atomical_id, _ = self.session_mgr.bp.get_effective_ticker(ticker_name, self.session_mgr.bp.height)
-                if status:
-                    atomical_id = location_id_bytes_to_compact(candidate_atomical_id)
-                    res["info"] = {
-                        "atomical_id": atomical_id,
-                        "location_id": location_id_bytes_to_compact(location),
-                        "payload": operation_found_at_inputs.get("payload"),
-                        "outputs": {
-                            expected_output_index: [{
-                                "address": get_address_from_output_script(txout.pk_script),
-                                "atomical_id": atomical_id,
-                                "type": "FT",
-                                "index": expected_output_index,
-                                "value": txout.value
-                            }]
-                        }
-                    }
-            else:
-                res["op"] = f"{res['op']}-failed"
-        elif operation_found_at_inputs and operation_found_at_inputs["op"] == "nft":
-            mint_info = operation_found_at_inputs.get("payload", {}).get("args", {})
-            if mint_info.get('request_realm'):
-                res["op"] = "mint-nft-realm"
-            elif mint_info.get('request_subrealm'):
-                res["op"] = "mint-nft-subrealm"
-            elif mint_info.get('request_container'):
-                res["op"] = "mint-nft-container"
-            elif mint_info.get('request_dmitem'):
-                res["op"] = "mint-nft-dmitem"
-            else:
-                res["op"] = "mint-nft"
-            if atomicals_receive_at_outputs:
-                expected_output_index = 0
-                location = tx_hash + util.pack_le_uint32(expected_output_index)
-                txout = tx.outputs[expected_output_index]
-                atomical_id = location_id_bytes_to_compact(atomicals_receive_at_outputs[expected_output_index][0]["atomical_id"])
-                res["info"] = {
-                    "atomical_id": atomical_id,
-                    "location_id": location_id_bytes_to_compact(location),
-                    "payload": operation_found_at_inputs.get("payload"),
-                    "outputs": {
-                        expected_output_index: [{
-                            "address": get_address_from_output_script(txout.pk_script),
-                            "atomical_id": atomical_id,
-                            "type": "NFT",
-                            "index": expected_output_index,
-                            "value": txout.value
-                        }]
-                    }
-                }
-            else:
-                res["op"] = f"{res['op']}-failed"
-        elif operation_found_at_inputs and operation_found_at_inputs["op"] == "dft":
-            res["op"] = "dft"
-        elif operation_found_at_inputs and operation_found_at_inputs["op"] == "sl":
-            res["op"] = "seal"
-        elif operation_found_at_inputs and operation_found_at_inputs["op"] == "x":
-            res["op"] = "splat"
-        elif operation_found_at_inputs and operation_found_at_inputs["op"] == "y":
-            res["op"] = "split"
-        elif operation_found_at_inputs and operation_found_at_inputs["op"] == "evt":
-            res["op"] = "evt"
-        elif operation_found_at_inputs and operation_found_at_inputs["op"] == "mod":
-            res["op"] = "mod"
-        elif operation_found_at_inputs and operation_found_at_inputs["op"] == "dat":
-            res["op"] = "dat"
-        # no operation_found_at_inputs, it will be transfer.
-        if blueprint_builder.ft_atomicals and atomicals_spent_at_inputs:
-            if not operation_found_at_inputs:
-                res["op"] = "transfer"
-            for atomical_id, input_ft in blueprint_builder.ft_atomicals.items():
-                compact_atomical_id = location_id_bytes_to_compact(atomical_id)
-                for i in input_ft.input_indexes:
-                    prev_txid = hash_to_hex_str(tx.inputs[i.txin_index].prev_hash)
-                    prev_raw_tx = self.db.get_raw_tx_by_tx_hash(hex_str_to_hash(prev_txid))
-                    if not prev_raw_tx:
-                        prev_raw_tx = await self.daemon_request('getrawtransaction', prev_txid, False)
-                        prev_raw_tx = bytes.fromhex(prev_raw_tx) 
-                        self.session_mgr.bp.general_data_cache[b'rtx' + hex_str_to_hash(prev_txid)] = prev_raw_tx
-                    prev_tx, _ = self.coin.DESERIALIZER(prev_raw_tx, 0).read_tx_and_hash()
-                    ft_data = {
-                        "address": get_address_from_output_script(prev_tx.outputs[tx.inputs[i.txin_index].prev_idx].pk_script),
-                        "atomical_id": compact_atomical_id,
-                        "type": "FT",
-                        "index": i.txin_index,
-                        "value": prev_tx.outputs[tx.inputs[i.txin_index].prev_idx].value
-                    }
-                    if i.txin_index not in res["transfers"]["inputs"]:
-                        res["transfers"]["inputs"][i.txin_index] = [ft_data]
-                    else:
-                        res["transfers"]["inputs"][i.txin_index].append(ft_data)
-            for k, v in blueprint_builder.ft_output_blueprint.outputs.items():
-                for atomical_id, output_ft in v['atomicals'].items():
-                    compact_atomical_id = location_id_bytes_to_compact(atomical_id)
-                    ft_data = {
-                        "address": get_address_from_output_script(tx.outputs[k].pk_script),
-                        "atomical_id": compact_atomical_id,
-                        "type": "FT",
-                        "index": k,
-                        "value": output_ft.satvalue
-                    }
-                    if k not in res["transfers"]["outputs"]:
-                        res["transfers"]["outputs"][k] = [ft_data]
-                    else:
-                        res["transfers"]["outputs"][k].append(ft_data)
-        if blueprint_builder.nft_atomicals and atomicals_spent_at_inputs:
-            if not operation_found_at_inputs:
-                res["op"] = "transfer"
-            for atomical_id, input_nft in blueprint_builder.nft_atomicals.items():
-                compact_atomical_id = location_id_bytes_to_compact(atomical_id)
-                for i in input_nft.input_indexes:
-                    prev_txid = hash_to_hex_str(tx.inputs[i.txin_index].prev_hash)
-                    prev_raw_tx = self.db.get_raw_tx_by_tx_hash(hex_str_to_hash(prev_txid))
-                    if not prev_raw_tx:
-                        prev_raw_tx = await self.daemon_request('getrawtransaction', prev_txid, False)             
-                        prev_raw_tx = bytes.fromhex(prev_raw_tx)
-                        self.session_mgr.bp.general_data_cache[b'rtx' + hex_str_to_hash(prev_txid)] = prev_raw_tx
-                    prev_tx, _ = self.coin.DESERIALIZER(prev_raw_tx, 0).read_tx_and_hash()
-                    nft_data = {
-                        "address": get_address_from_output_script(prev_tx.outputs[tx.inputs[i.txin_index].prev_idx].pk_script),
-                        "atomical_id": compact_atomical_id,
-                        "type": "NFT",
-                        "index": i.txin_index,
-                        "value": prev_tx.outputs[tx.inputs[i.txin_index].prev_idx].value
-                    }
-                    if i.txin_index not in res["transfers"]["inputs"]:
-                        res["transfers"]["inputs"][i.txin_index] = [nft_data]
-                    else:
-                        res["transfers"]["inputs"][i.txin_index].append(nft_data)
-            for k, v in blueprint_builder.nft_output_blueprint.outputs.items():
-                for atomical_id, output_nft in v['atomicals'].items():
-                    compact_atomical_id = location_id_bytes_to_compact(atomical_id)
-                    nft_data = {
-                        "address": get_address_from_output_script(tx.outputs[k].pk_script),
-                        "atomical_id": compact_atomical_id,
-                        "type": output_nft.type,
-                        "index": k,
-                        "value": output_nft.total_satsvalue
-                    }
-                    if k not in res["transfers"]["outputs"]:
-                        res["transfers"]["outputs"][k] = [nft_data]
-                    else:
-                        res["transfers"]["outputs"][k].append(nft_data)
-
-        atomical_id_for_payment, payment_marker_idx, entity_type = AtomicalsTransferBlueprintBuilder.get_atomical_id_for_payment_marker_if_found(tx)
-        if atomical_id_for_payment:
-            res["info"]["payment"] = {
-                "atomical_id": location_id_bytes_to_compact(atomical_id_for_payment),
-                "payment_marker_idx": payment_marker_idx
-            }
-            if entity_type == 'subrealm':
-                res["op"] = "payment-subrealm"
-            if entity_type == 'dmitem':
-                res["op"] = "payment-dmitem"
-
-        if res.get("op"):
-            self.session_mgr._tx_detail_cache[tx_hash] = res
-        return res
 
     async def atomicals_transaction(self, txid):
-        return await self.get_transaction_detail(txid)
-    
+        return await self.session_mgr.get_transaction_detail(txid)
+
     async def get_transaction_detail_by_height(self, height, limit, offset, op_type, reverse=True):
         res = []
         txs_list = []
@@ -3007,25 +3023,25 @@ class ElectrumX(SessionBase):
             # get operation by db method
             tx_num, _ = self.db.get_tx_num_height_from_tx_hash(hex_str_to_hash(tx))
             txs_list.append({
-                "tx_num": tx_num, 
+                "tx_num": tx_num,
                 "tx_hash": tx,
                 "height": height
             })
 
         txs_list.sort(key=lambda x: x['tx_num'], reverse=reverse)
         for tx in txs_list:
-            data = await self.get_transaction_detail(tx["tx_hash"], height, tx["tx_num"])
+            data = await self.session_mgr.get_transaction_detail(tx["tx_hash"], height, tx["tx_num"])
             if (op_type and op_type == data["op"]) or (not op_type and data["op"]):
                 res.append(data)
         total = len(res)
         return res[offset:offset+limit], total
-    
+
     # get the whole transaction by block height
     # return transaction detail
     async def transaction_by_height(self, height, limit=10, offset=0, op_type=None, reverse=True):
         res, total = await self.get_transaction_detail_by_height(height, limit, offset, op_type, reverse)
         return {"result": res, "total": total, "limit": limit, "offset": offset}
-    
+
     # get transaction by atomical id
     async def transaction_by_atomical_id(self, compact_atomical_id_or_atomical_number, limit=10, offset=0, op_type=None, reverse=True):
         res = []
@@ -3039,32 +3055,33 @@ class ElectrumX(SessionBase):
 
         res = []
         if op_type:
-            op = self.session_mgr.op_list.get(op_type, None)
+            op = self.session_mgr.bp.op_list.get(op_type, None)
             history_data, total = await self.session_mgr.get_history_op(hashX, limit, offset, op, reverse)
         else:
             history_data, total = await self.session_mgr.get_history_op(hashX, limit, offset, None, reverse)
         for history in history_data:
             tx_hash, tx_height = self.db.fs_tx_hash(history["tx_num"])
-            data = await self.get_transaction_detail(hash_to_hex_str(tx_hash), tx_height, history["tx_num"])
+            data = await self.session_mgr.get_transaction_detail(hash_to_hex_str(tx_hash), tx_height, history["tx_num"])
             if data and data["op"]:
                 if (op_type and data["op"] == op_type) or not op_type:
                     res.append(data)
         return {"result": res, "total": total, "limit": limit, "offset": offset}
-    
+
     # get transaction by scripthash
     async def transaction_by_scripthash(self, scripthash, limit=10, offset=0, op_type=None, reverse=True):
-        res = []
         hashX = scripthash_to_hashX(scripthash)
+        res = []
         if op_type:
-            op = self.session_mgr.op_list.get(op_type, None)
+            op = self.session_mgr.bp.op_list.get(op_type, None)
             history_data, total = await self.session_mgr.get_history_op(hashX, limit, offset, op, reverse)
         else:
             history_data, total = await self.session_mgr.get_history_op(hashX, limit, offset, None, reverse)
+
         for history in history_data:
             tx_hash, tx_height = self.db.fs_tx_hash(history["tx_num"])
-            data = await self.get_transaction_detail(hash_to_hex_str(tx_hash), tx_height, history["tx_num"])
+            data = await self.session_mgr.get_transaction_detail(hash_to_hex_str(tx_hash), tx_height, history["tx_num"])
             if data and data["op"]:
-                if (op_type and data["op"] == op_type) or not op_type:
+                if data["op"] and (data["op"] == op_type or not op_type):
                     res.append(data)
         return {"result": res, "total": total, "limit": limit, "offset": offset}
 
@@ -3101,6 +3118,7 @@ class ElectrumX(SessionBase):
             'blockchain.atomicals.listscripthash': self.atomicals_listscripthash,
             'blockchain.atomicals.list': self.atomicals_list,
             'blockchain.atomicals.get_numbers': self.atomicals_num_to_id,
+            'blockchain.atomicals.get_block_hash': self.atomicals_block_hash,
             'blockchain.atomicals.get_block_txs': self.atomicals_block_txs,
             'blockchain.atomicals.dump': self.atomicals_dump,
             'blockchain.atomicals.at_location': self.atomicals_at_location,
@@ -3128,6 +3146,7 @@ class ElectrumX(SessionBase):
             'blockchain.atomicals.find_containers': self.atomicals_search_containers,
             'blockchain.atomicals.get_holders': self.atomicals_get_holders,
             'blockchain.atomicals.transaction': self.atomicals_transaction,
+            'blockchain.atomicals.transaction_global': self.session_mgr.transaction_global,
             'blockchain.atomicals.transaction_by_height': self.transaction_by_height,
             'blockchain.atomicals.transaction_by_atomical_id': self.transaction_by_atomical_id,
             'blockchain.atomicals.transaction_by_scripthash': self.transaction_by_scripthash,

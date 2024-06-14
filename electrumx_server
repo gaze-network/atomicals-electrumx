@@ -15,13 +15,17 @@ import os
 import sys
 import logging.handlers
 
+from dotenv import load_dotenv
 from electrumx import Controller, Env
 from electrumx.lib.util import CompactFormatter, make_logger
+
+load_dotenv()
 
 
 def main():
     '''Set up logging and run the server.'''
     log_fmt = Env.default('LOG_FORMAT', '%(levelname)s:%(name)s:%(message)s')
+    log_level = Env.default('LOG_LEVEL', 'INFO').upper()
     log_path = Env.default('LOG_PATH', None)
     if log_path:
         exist =os.path.exists(log_path)
@@ -31,7 +35,7 @@ def main():
     else:
         handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(CompactFormatter(log_fmt))
-    logger = make_logger('electrumx', handler=handler, level='INFO')
+    logger = make_logger('electrumx', handler=handler, level=log_level)
 
     logger.info('ElectrumX server starting')
     try:
