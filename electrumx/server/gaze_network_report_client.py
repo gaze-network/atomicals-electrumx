@@ -7,8 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from electrumx.server.env import Env
 import socket
-import requests.packages.urllib3.util.connection as urllib3_cn
-    
+import urllib3.util.connection as urllib3_cn
 
 # patch requests package to use ipv4 only for client ip address
 def allowed_gai_family():

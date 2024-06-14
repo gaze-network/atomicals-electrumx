@@ -61,6 +61,7 @@ from electrumx.server.history import TXNUM_LEN
 from electrumx.server.http_middleware import rate_limiter, cors_middleware, error_middleware, request_middleware
 from electrumx.server.http_opi import HttpOPIHandler
 from electrumx.server.http_session import HttpHandler
+from electrumx.server.http_unified_api import HttpUnifiedAPIHandler
 from electrumx.server.peers import PeerManager
 from electrumx.lib.script import SCRIPTHASH_LEN
 
@@ -234,6 +235,7 @@ class SessionManager:
                     ])
                     handler = HttpHandler(self, self.db, self.mempool, self.peer_mgr, kind)
                     opi_handler = HttpOPIHandler(self, self.env, self.db, self.bp, handler)
+                    uapi_handler = HttpUnifiedAPIHandler(self, self.env, self.db, self.bp, handler)
                     # GET
                     app.router.add_get('/proxy', handler.proxy)
                     app.router.add_get('/proxy/health', handler.health)
@@ -362,6 +364,7 @@ class SessionManager:
                     app.router.add_post('/proxy/{method}', handler.handle_post_method)
                     # opi
                     opi_handler.mount_routes(app.router)
+                    uapi_handler.mount_routes(app.router)
                     app['rate_limiter'] = rate_limiter
                     runner = web.AppRunner(app)
                     await runner.setup()

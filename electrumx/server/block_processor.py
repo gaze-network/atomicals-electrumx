@@ -247,6 +247,7 @@ class BlockProcessor:
             daemon, env.coin, self.blocks_event,
             polling_delay_secs=env.daemon_poll_interval_blocks_msec/1000,
         )
+        self.gaze_network_report_client = None
         if self.env.gaze_network_report:
             self.gaze_network_report_client = GazeNetworkReportClient(env)
             self.gaze_network_report_client.submit_node_report('arc20')
