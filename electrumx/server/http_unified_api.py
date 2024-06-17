@@ -354,6 +354,7 @@ class HttpUnifiedAPIHandler(object):
             "blockHeight": block_height,
             "totalSupply": str(max_supply),
             "mintedAmount": str(mint_amount),
+            "decimals": 0, # no decimal point for arc20
             "list": formatted_results
         })
     
