@@ -7,7 +7,7 @@ from aiohttp.web import json_response
 from aiohttp.web_urldispatcher import UrlDispatcher
 
 from electrumx.lib import util
-from electrumx.lib.hash import HASHX_LEN, hex_str_to_hash, sha256
+from electrumx.lib.hash import HASHX_LEN, double_sha256, hash_to_hex_str, hex_str_to_hash, sha256
 from electrumx.lib.script2addr import get_address_from_output_script, get_script_from_address
 from electrumx.lib.util_atomicals import DFT_MINT_MAX_MAX_COUNT_DENSITY, compact_to_location_id_bytes, location_id_bytes_to_compact
 from electrumx.server.block_processor import BlockProcessor
@@ -50,6 +50,9 @@ def scripthash_to_hashX(script_hash: bytes) -> 'Optional[bytes]':
     if len(script_hash) == 32:
         return script_hash[:HASHX_LEN]
     return None
+
+def get_decimals():
+    return 0 # no decimal point for arc20
 
 @dataclass
 class BalanceQuery:
@@ -208,7 +211,7 @@ class HttpUnifiedAPIHandler(object):
                     "id": location_id_bytes_to_compact(atomical_id),
                     "name": ticker,
                     "symbol": ticker,
-                    "decimals": 0, # no decimal point for arc20
+                    "decimals": get_decimals(),
                 }
                 populated_balances.append(balance)
         return populated_balances
@@ -278,6 +281,108 @@ class HttpUnifiedAPIHandler(object):
             "list": formatted_results
         })
     
+    async def _get_tx_detail(self, tx_hash: str, op: str | None) -> dict | None:
+        tx_data = await self.session_mgr.get_transaction_detail(tx_hash)
+        block_height = tx_data.get("height", 0)
+        tx_num = tx_data.get("tx_num", 0)
+        tx_info = tx_data.get("info", {})
+        tx_transfers = tx_data.get("transfers", {})
+        tx_op = tx_data.get("op", "")
+
+        if op and op != tx_op:
+            return None
+        
+        tx_payload = tx_info.get("payload", None)
+        if not tx_payload:
+            tx_payload = {
+                "args": {}
+            }
+
+        # tx_transfers distribution
+        # contains inputs, outputs, is_burned, burned_fts, is_cleanly_assigned
+        tx_inputs = tx_transfers.get("inputs", {})
+        tx_outputs = tx_transfers.get("outputs", {})
+        tx_burned_fts = tx_transfers.get("burned_fts", {})
+
+        commit_tx_id = "" # TODO
+        commit_index = 0 # TODO
+
+        inputs = []
+        # if multiple FTs in same utxo, 
+        # will have multiple inputs with same index
+        for tx_i in tx_inputs.values():
+            for tx_input in tx_i:
+                address = tx_input.get("address", "")
+                input_map = {
+                    "index": tx_input.get("index", 0),
+                    "id": tx_input.get("atomical_id", ""),
+                    "amount": str(tx_input.get("value", 0)),
+                    "decimals": get_decimals(),
+                    "address": address,
+                    "pkScript": get_script_from_address(address).hex(),
+                }
+                inputs.append(input_map)
+
+        outputs = []
+        # includes FT outputs from mints too
+        for tx_o in tx_outputs.values():
+            for tx_output in tx_o:
+                address = tx_output.get("address", "")
+                output_map = {
+                    "index": tx_output.get("index", 0),
+                    "id": tx_output.get("atomical_id", ""),
+                    "amount": str(tx_output.get("value", 0)),
+                    "decimals": get_decimals(),
+                    "address": address,
+                    "pkScript": get_script_from_address(address).hex(),
+                }
+                outputs.append(output_map)
+
+        mints = {}
+        mint_ticker = tx_payload['args'].get("mint_ticker", "")
+        if mint_ticker:
+            atomical_id = self._resolve_ticker_to_atomical_id(mint_ticker)
+            mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id, True)
+            mint_amount = mint_info.get("$mint_amount", 0)
+            mints[atomical_id.hex()] = {
+                "amount": mint_amount,
+                "decimals": get_decimals(),
+            }
+            commit_txid = mint_info['commit_txid']
+            commit_tx_id = commit_txid.hex()
+            commit_index = mint_info.get('commit_index', 0)
+
+        burns = {}
+        for k, v in tx_burned_fts.items():
+            burns[k] = {
+                "amount": str(v),
+                "decimals": get_decimals(),
+            }
+        
+        # sort inputs and outputs asc
+        inputs.sort(key=lambda x: x['index'], reverse=False)
+        outputs.sort(key=lambda x: x['index'], reverse=False)
+
+        return {
+            "txHash": tx_hash,
+            "blockHeight": block_height,
+            "index": tx_num,
+            "timestamp": 0, # unix timestamp # TODO
+            "inputs": inputs,
+            "outputs": outputs,
+            "mints": mints,
+            "burns": burns,
+            # arc20-specific data
+            "extend": { 
+                "op": tx_op,
+                "info": {
+                    "payload": tx_payload,
+                },
+                "commitTxHash": commit_tx_id,
+                "commitIndex": commit_index,
+            },
+        }
+    
     @error_handler
     async def get_arc20_transactions(self, request: 'Request') -> 'Response':
         # parse wallet (optional)
@@ -296,7 +401,43 @@ class HttpUnifiedAPIHandler(object):
                 atomical_id = self._parse_request_id(id)
             except:
                 return format_response(None, 400, 'Invalid ID.')
-        return format_response(None, 500, "impl")
+
+        # parse op
+        op_str = request.query.get("op", "")
+        op_num = None
+        if op_str:
+            op_num = self.session_mgr.bp.op_list.get(op_str, None)
+            if not op_num:
+                return format_response(None, 400, 'Invalid Op.')
+
+        txs = []
+        tx_hashes = []
+        if not (address or id):
+            # get all tx in single block_height
+            tx_hashes = self.db.get_atomicals_block_txs(block_height)
+        elif atomical_id:
+            # get all tx filter by id
+            reverse = False
+            hashX = double_sha256(atomical_id)
+            history_data, _ = await self.session_mgr.get_history_op(hashX, -1, 0, op_num, reverse)
+            for history in history_data:
+                tx_hash, _ = self.db.fs_tx_hash(history["tx_num"])
+                tx_hashes.append(hash_to_hex_str(tx_hash))
+        else:
+            # get all tx filter by wallet
+            # TODO
+            tx_hashes = []
+
+        txs = await asyncio.gather(*[self._get_tx_detail(tx, op_str) for tx in tx_hashes])
+        # filter None out
+        res_txs = []
+        for tx in txs:
+            if tx:
+                res_txs.append(tx)
+
+        return format_response({
+            "list": res_txs,
+        })
     
     @error_handler
     async def get_arc20_holders(self, request: 'Request') -> 'Response':
@@ -352,7 +493,7 @@ class HttpUnifiedAPIHandler(object):
             "blockHeight": block_height,
             "totalSupply": str(max_supply),
             "mintedAmount": str(mint_amount),
-            "decimals": 0, # no decimal point for arc20
+            "decimals": get_decimals(),
             "list": formatted_results
         })
     
@@ -416,7 +557,7 @@ class HttpUnifiedAPIHandler(object):
             "circulatingSupply": str(mint_amount - burned_amount),
             "mintedAmount": str(mint_amount),
             "burnedAmount": str(burned_amount),
-            "decimals": 0, # no decimal point for arc20
+            "decimals": get_decimals(),
             "deployedAt": deployedAt,
             "deployedAtHeight": deployedAtHeight,
             "deployTxHash": deployTxHash,
@@ -451,5 +592,39 @@ class HttpUnifiedAPIHandler(object):
         # parse wallet
         wallet = request.match_info.get("wallet", "")
         address = self._parse_addr(wallet)
+
+        # parse block_height
+        latest_block_height = self.db.db_height
+        block_height = int(request.query.get('blockHeight', latest_block_height))
         
-        return format_response(None, 500, "impl")
+        # parse atomical_id
+        id = request.query.get("id")
+        atomical_id = None
+        if id:
+            try:
+                atomical_id = self._parse_request_id(id)
+            except:
+                return format_response(None, 400, 'Invalid ID.')
+
+        # TODO
+        # {
+        #     "txHash": string,
+        #     "outputIndex": number,
+        #     "sats": number, // sats amount in utxo
+        #     "extend": {
+        #         "atomicals": [
+        #             {
+        #                 "atomicalId": string,
+        #                 "ticker": string,
+        #                 "amount": string, // numeric string
+        #                 "decimals": number
+        #             }
+        #         ]
+        #     }
+        # }
+        formatted_results = []
+        
+        return format_response({
+            "blockHeight": block_height,
+            "list": formatted_results,
+        })
