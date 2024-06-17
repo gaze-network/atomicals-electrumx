@@ -202,9 +202,7 @@ class HttpUnifiedAPIHandler(object):
             atomical = atomicals.get(atomical_id)
             if atomical:
                 atomical = await self.db.populate_extended_atomical_holder_info(atomical_id, atomical)
-                ticker = atomical.get("$ticker")
-                if not ticker:
-                    ticker = "" # default to empty string
+                ticker = atomical.get("$ticker", "")
                 balance = {
                     "amount": str(amount),
                     "id": location_id_bytes_to_compact(atomical_id),
@@ -348,7 +346,7 @@ class HttpUnifiedAPIHandler(object):
                 })
         
         # sort by holding desc
-        formatted_results.sort(key=lambda x: x['holding'], reverse=True)
+        formatted_results.sort(key=lambda x: x['amount'], reverse=True)
 
         return format_response({
             "blockHeight": block_height,
@@ -368,7 +366,85 @@ class HttpUnifiedAPIHandler(object):
                 atomical_id = self._parse_request_id(id)
             except:
                 return format_response(None, 400, 'Invalid ID.')
-        return format_response(None, 500, "impl")
+        
+        # get data
+        atomical = await self._get_atomical(atomical_id)
+        atomical = await self.db.populate_extended_atomical_holder_info(atomical_id, atomical)
+
+        subtype = atomical.get("subtype", "")
+
+        if subtype == 'decentralized':
+            atomical = await self.session_mgr.bp.get_dft_mint_info_rpc_format_by_atomical_id(atomical_id)
+        elif subtype == 'direct':
+            atomical = await self.session_mgr.bp.get_ft_mint_info_rpc_format_by_atomical_id(atomical_id)
+
+        # parse result
+        ticker = atomical.get("$ticker", "")
+        holders = atomical.get("holders", [])
+        mint_mode = atomical.get("$mint_mode", "")
+        mint_info = atomical.get("mint_info", {})
+        max_mints = atomical.get("$max_mints", 0) # number of times this token can be minted
+        
+        max_supply = 0
+        mint_amount = 0 # mint size
+        burned_amount = 0 # TODO
+        
+        if atomical["type"] == "FT":
+            if mint_mode == "fixed":
+                max_supply = atomical.get("$max_supply", 0)
+            else:
+                max_supply = atomical.get("$max_supply", -1)
+                if max_supply < 0:
+                    mint_amount = mint_info.get("args", {}).get("mint_amount")
+                    max_supply = DFT_MINT_MAX_MAX_COUNT_DENSITY * mint_amount
+        elif atomical["type"] == "NFT":
+            mint_mode = ""
+
+        # TODO
+        deployedAt = 0 # unix timestamp
+        deployedAtHeight = 0
+        deployTxHash = ""
+        completedAt = None # unix timestamp
+        completedAtHeight = None
+        deployer_address = ""
+
+        return format_response({
+            "id": location_id_bytes_to_compact(atomical_id),
+            "name": ticker,
+            "symbol": ticker,
+            "totalSupply": str(max_supply),
+            "circulatingSupply": str(mint_amount - burned_amount),
+            "mintedAmount": str(mint_amount),
+            "burnedAmount": str(burned_amount),
+            "decimals": 0, # no decimal point for arc20
+            "deployedAt": deployedAt,
+            "deployedAtHeight": deployedAtHeight,
+            "deployTxHash": deployTxHash,
+            "completedAt": completedAt,
+            "completedAtHeight": completedAtHeight,
+            "holdersCount": len(holders),
+
+            # arc20-specific data
+            "extend": {
+                "atomicalId": location_id_bytes_to_compact(atomical_id),
+                "atomicalNumber": atomical.get("atomical_number", 0),
+                "atomicalRef": atomical.get("atomical_ref", ""),
+                "amountPerMint": str(mint_amount),
+                "maxMints": str(max_mints),
+                "deployedBy": deployer_address,
+                "mintHeight": atomical.get("$mint_height", 0), # the block height this FT can start to be minted
+                "mintInfo": {
+                    "commitTxHash": mint_info.get("commit_txid"),
+                    "commitIndex": mint_info.get("commit_index"), # commit tx output index of utxo used in reveal tx
+                    "revealTxHash": mint_info.get("reveal_location_txid"),
+                    "revealIndex": mint_info.get("reveal_location_index"), # reveal tx input index of utxo used to reveal
+                    "args": mint_info.get("args", {}), # raw atomicals operation payload
+                    "metadata": mint_info.get("meta", {}) # metadata.json used during deployment
+                },
+                "subtype": subtype,
+                "mintMode": mint_mode
+            }
+        })
     
     @error_handler
     async def get_arc20_utxos(self, request: 'Request') -> 'Response':
