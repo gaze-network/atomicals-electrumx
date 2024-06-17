@@ -188,7 +188,7 @@ class HttpOPIHandler(object):
                 balance = {
                     "amount": amount,
                 }
-                ticker = atomical.get("ticker")
+                ticker = atomical.get("$ticker")
                 if ticker:
                     balance["ticker"] = ticker
                 populated_balances[location_id_bytes_to_compact(atomical_id)] = balance

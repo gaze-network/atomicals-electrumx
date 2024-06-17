@@ -202,7 +202,7 @@ class HttpUnifiedAPIHandler(object):
             atomical = atomicals.get(atomical_id)
             if atomical:
                 atomical = await self.db.populate_extended_atomical_holder_info(atomical_id, atomical)
-                ticker = atomical.get("ticker")
+                ticker = atomical.get("$ticker")
                 if not ticker:
                     ticker = "" # default to empty string
                 balance = {
@@ -335,16 +335,16 @@ class HttpUnifiedAPIHandler(object):
                 formatted_results.append({
                     "address": get_address_from_output_script(bytes.fromhex(holder['script'])),
                     "pkScript": holder['script'],
+                    "amount": str(holder["holding"]),
                     "percent": percent,
-                    "holding": holder["holding"]
                 })
         elif atomical["type"] == "NFT":
             for holder in atomical.get("holders", []):
                 formatted_results.append({
                     "address": get_address_from_output_script(bytes.fromhex(holder['script'])),
                     "pkScript": holder['script'],
+                    "amount": str(holder["holding"]),
                     "percent": 1,
-                    "holding": holder["holding"]
                 })
         
         # sort by holding desc
