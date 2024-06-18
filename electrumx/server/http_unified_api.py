@@ -165,7 +165,8 @@ class HttpUnifiedAPIHandler(object):
                     balances[atomical_id] = 0
                 balances[atomical_id] += minted_ft['value']
 
-    async def _get_atomical(self, atomical_id: bytes) -> 'Optional[str]':
+    async def _get_atomical(self, atomical_id: bytes, block_height: Optional[int] = None) -> 'map':
+        # TODO: filter data by block_height
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
         atomical = await self.http_handler.atomical_id_get(compact_atomical_id)
         return atomical
@@ -313,13 +314,16 @@ class HttpUnifiedAPIHandler(object):
         for tx_i in tx_inputs.values():
             for tx_input in tx_i:
                 address = tx_input.get("address", "")
+                pk_script = ""
+                if address:
+                    pk_script = get_script_from_address(address).hex()
                 input_map = {
                     "index": tx_input.get("index", 0),
                     "id": tx_input.get("atomical_id", ""),
                     "amount": str(tx_input.get("value", 0)),
                     "decimals": get_decimals(),
                     "address": address,
-                    "pkScript": get_script_from_address(address).hex(),
+                    "pkScript": pk_script,
                 }
                 inputs.append(input_map)
 
@@ -328,13 +332,16 @@ class HttpUnifiedAPIHandler(object):
         for tx_o in tx_outputs.values():
             for tx_output in tx_o:
                 address = tx_output.get("address", "")
+                pk_script = ""
+                if address:
+                    pk_script = get_script_from_address(address).hex()
                 output_map = {
                     "index": tx_output.get("index", 0),
                     "id": tx_output.get("atomical_id", ""),
                     "amount": str(tx_output.get("value", 0)),
                     "decimals": get_decimals(),
                     "address": address,
-                    "pkScript": get_script_from_address(address).hex(),
+                    "pkScript": pk_script,
                 }
                 outputs.append(output_map)
 
@@ -454,9 +461,7 @@ class HttpUnifiedAPIHandler(object):
         latest_block_height = self.db.db_height
         block_height = int(request.query.get('blockHeight', latest_block_height))
 
-        # TODO: add block_height to filter
-
-        atomical = await self._get_atomical(atomical_id)
+        atomical = await self._get_atomical(atomical_id, block_height)
         atomical = await self.db.populate_extended_atomical_holder_info(atomical_id, atomical)
         formatted_results = []
         max_supply = 0
@@ -510,36 +515,42 @@ class HttpUnifiedAPIHandler(object):
         
         # get data
         atomical = await self._get_atomical(atomical_id)
-        atomical = await self.db.populate_extended_atomical_holder_info(atomical_id, atomical)
 
+        atomical_type = atomical.get("type", "")
         subtype = atomical.get("subtype", "")
+        mint_count = 0
 
         if subtype == 'decentralized':
             atomical = await self.session_mgr.bp.get_dft_mint_info_rpc_format_by_atomical_id(atomical_id)
+            mint_count = atomical["dft_info"]["mint_count"]
         elif subtype == 'direct':
             atomical = await self.session_mgr.bp.get_ft_mint_info_rpc_format_by_atomical_id(atomical_id)
 
-        # parse result
         ticker = atomical.get("$ticker", "")
-        holders = atomical.get("holders", [])
         mint_mode = atomical.get("$mint_mode", "")
         mint_info = atomical.get("mint_info", {})
-        max_mints = atomical.get("$max_mints", 0) # number of times this token can be minted
         
+        location_summary = atomical.get("location_summary", {})
+        holder_count = location_summary.get("unique_holders", 0)
+        circulating_supply = location_summary.get("circulating_supply", 0)
+
         max_supply = 0
         mint_amount = 0 # mint size
-        burned_amount = 0 # TODO
         
-        if atomical["type"] == "FT":
+        if atomical_type == "FT":
             if mint_mode == "fixed":
                 max_supply = atomical.get("$max_supply", 0)
+                mint_amount = mint_info.get("args", {}).get("mint_amount")
             else:
                 max_supply = atomical.get("$max_supply", -1)
                 if max_supply < 0:
                     mint_amount = mint_info.get("args", {}).get("mint_amount")
                     max_supply = DFT_MINT_MAX_MAX_COUNT_DENSITY * mint_amount
-        elif atomical["type"] == "NFT":
+        elif atomical_type == "NFT":
             mint_mode = ""
+
+        minted_amount = mint_count * mint_amount # total mint
+        burned_amount = minted_amount - circulating_supply
 
         # TODO
         deployedAt = 0 # unix timestamp
@@ -549,13 +560,14 @@ class HttpUnifiedAPIHandler(object):
         completedAtHeight = None
         deployer_address = ""
 
+        compact_atomical_id = location_id_bytes_to_compact(atomical_id)
         return format_response({
-            "id": location_id_bytes_to_compact(atomical_id),
+            "id": compact_atomical_id,
             "name": ticker,
             "symbol": ticker,
             "totalSupply": str(max_supply),
-            "circulatingSupply": str(mint_amount - burned_amount),
-            "mintedAmount": str(mint_amount),
+            "circulatingSupply": str(circulating_supply),
+            "mintedAmount": str(minted_amount),
             "burnedAmount": str(burned_amount),
             "decimals": get_decimals(),
             "deployedAt": deployedAt,
@@ -563,15 +575,15 @@ class HttpUnifiedAPIHandler(object):
             "deployTxHash": deployTxHash,
             "completedAt": completedAt,
             "completedAtHeight": completedAtHeight,
-            "holdersCount": len(holders),
+            "holdersCount": holder_count,
 
             # arc20-specific data
             "extend": {
-                "atomicalId": location_id_bytes_to_compact(atomical_id),
+                "atomicalId": compact_atomical_id,
                 "atomicalNumber": atomical.get("atomical_number", 0),
                 "atomicalRef": atomical.get("atomical_ref", ""),
                 "amountPerMint": str(mint_amount),
-                "maxMints": str(max_mints),
+                "maxMints": str(atomical.get("$max_mints", 0)), # number of times this token can be minted
                 "deployedBy": deployer_address,
                 "mintHeight": atomical.get("$mint_height", 0), # the block height this FT can start to be minted
                 "mintInfo": {
