@@ -165,8 +165,7 @@ class HttpUnifiedAPIHandler(object):
                     balances[atomical_id] = 0
                 balances[atomical_id] += minted_ft['value']
 
-    async def _get_atomical(self, atomical_id: bytes, block_height: Optional[int] = None) -> 'map':
-        # TODO: filter data by block_height
+    async def _get_atomical(self, atomical_id: bytes) -> 'map':
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
         atomical = await self.http_handler.atomical_id_get(compact_atomical_id)
         return atomical
@@ -461,36 +460,42 @@ class HttpUnifiedAPIHandler(object):
         latest_block_height = self.db.db_height
         block_height = int(request.query.get('blockHeight', latest_block_height))
 
-        atomical = await self._get_atomical(atomical_id, block_height)
-        atomical = await self.db.populate_extended_atomical_holder_info(atomical_id, atomical)
+        # base data
+        atomical = await self._get_atomical(atomical_id)
+
         formatted_results = []
-        max_supply = 0
-        mint_amount = 0
-        if atomical["type"] == "FT":
-            if atomical["$mint_mode"] == "fixed":
-                max_supply = atomical.get('$max_supply', 0)
-            else:
-                max_supply = atomical.get('$max_supply', -1)
-                if max_supply < 0:
-                    mint_amount = atomical.get("mint_info", {}).get("args", {}).get("mint_amount")
-                    max_supply = DFT_MINT_MAX_MAX_COUNT_DENSITY * mint_amount
-            for holder in atomical.get("holders", []):
-                percent = holder['holding'] / max_supply
-                formatted_results.append({
-                    "address": get_address_from_output_script(bytes.fromhex(holder['script'])),
-                    "pkScript": holder['script'],
-                    "amount": str(holder["holding"]),
-                    "percent": percent,
-                })
-        elif atomical["type"] == "NFT":
-            for holder in atomical.get("holders", []):
-                formatted_results.append({
-                    "address": get_address_from_output_script(bytes.fromhex(holder['script'])),
-                    "pkScript": holder['script'],
-                    "amount": str(holder["holding"]),
-                    "percent": 1,
-                })
-        
+        if block_height == latest_block_height:
+            atomical = await self.db.populate_extended_atomical_holder_info(atomical_id, atomical)
+            max_supply = 0
+            mint_amount = 0
+            if atomical["type"] == "FT":
+                if atomical["$mint_mode"] == "fixed":
+                    max_supply = atomical.get('$max_supply', 0)
+                else:
+                    max_supply = atomical.get('$max_supply', -1)
+                    if max_supply < 0:
+                        mint_amount = atomical.get("mint_info", {}).get("args", {}).get("mint_amount")
+                        max_supply = DFT_MINT_MAX_MAX_COUNT_DENSITY * mint_amount
+                for holder in atomical.get("holders", []):
+                    percent = holder['holding'] / max_supply
+                    formatted_results.append({
+                        "address": get_address_from_output_script(bytes.fromhex(holder['script'])),
+                        "pkScript": holder['script'],
+                        "amount": str(holder["holding"]),
+                        "percent": percent,
+                    })
+            elif atomical["type"] == "NFT":
+                for holder in atomical.get("holders", []):
+                    formatted_results.append({
+                        "address": get_address_from_output_script(bytes.fromhex(holder['script'])),
+                        "pkScript": holder['script'],
+                        "amount": str(holder["holding"]),
+                        "percent": 1,
+                    })
+        else:
+            # TODO: filter data by block_height
+            formatted_results = []
+
         # sort by holding desc
         formatted_results.sort(key=lambda x: x['amount'], reverse=True)
 
