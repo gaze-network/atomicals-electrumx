@@ -120,7 +120,7 @@ class HttpUnifiedAPIHandler(object):
         except:
             pk_bytes = None
         if pk_bytes:
-            addr_from_pk = get_address_from_output_script(bytes.fromhex(wallet))
+            addr_from_pk = get_address_from_output_script(pk_bytes)
             if addr_from_pk:
                 addr = addr_from_pk
         else:
@@ -165,7 +165,7 @@ class HttpUnifiedAPIHandler(object):
                     balances[atomical_id] = 0
                 balances[atomical_id] += minted_ft['value']
 
-    async def _get_atomical(self, atomical_id: bytes) -> 'map':
+    async def _get_atomical(self, atomical_id: bytes) -> 'dict':
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
         atomical = await self.http_handler.atomical_id_get(compact_atomical_id)
         return atomical
@@ -468,12 +468,16 @@ class HttpUnifiedAPIHandler(object):
     async def get_arc20_holders(self, request: 'Request') -> 'Response':
         # parse atomical_id
         id = request.match_info.get("id", "")
+        if not id:
+            return format_response(None, 400, 'ID is required.')
+        
         atomical_id = None
-        if id:
-            try:
-                atomical_id = self._parse_request_id(id)
-            except:
-                return format_response(None, 400, 'Invalid ID.')
+        try:
+            atomical_id = self._parse_request_id(id)
+        except:
+            return format_response(None, 400, 'Invalid ID.')
+        if not atomical_id:
+            return format_response(None, 400, 'Invalid ID.')
             
         # parse block_height
         latest_block_height = self.db.db_height
@@ -530,37 +534,31 @@ class HttpUnifiedAPIHandler(object):
     async def get_arc20_token(self, request: 'Request') -> 'Response':
         # parse atomical_id
         id = request.match_info.get("id", "")
+        if not id:
+            return format_response(None, 400, 'ID is required.')
+        
         atomical_id = None
-        if id:
-            try:
-                atomical_id = self._parse_request_id(id)
-            except:
-                return format_response(None, 400, 'Invalid ID.')
+        try:
+            atomical_id = self._parse_request_id(id)
+        except:
+            return format_response(None, 400, 'Invalid ID.')
+        if not atomical_id:
+            return format_response(None, 400, 'Invalid ID.')
         
         # get data
-        atomical = await self._get_atomical(atomical_id)
+        atomical: dict = await self._get_atomical(atomical_id)
 
         atomical_type = atomical.get("type", "")
         subtype = atomical.get("subtype", "")
-        mint_count = 0
-
-        if subtype == 'decentralized':
-            atomical = await self.session_mgr.bp.get_dft_mint_info_rpc_format_by_atomical_id(atomical_id)
-            mint_count = atomical["dft_info"]["mint_count"]
-        elif subtype == 'direct':
-            atomical = await self.session_mgr.bp.get_ft_mint_info_rpc_format_by_atomical_id(atomical_id)
-
-        ticker = atomical.get("$ticker", "")
         mint_mode = atomical.get("$mint_mode", "")
-        mint_info = atomical.get("mint_info", {})
-        
-        location_summary = atomical.get("location_summary", {})
-        holder_count = location_summary.get("unique_holders", 0)
-        circulating_supply = location_summary.get("circulating_supply", 0)
+        mint_info: dict = atomical.get("mint_info", {})
+        ticker = atomical.get("$ticker", "")
 
+        mint_count = 0
+        minted_amount = 0
         max_supply = 0
         mint_amount = 0 # mint size
-        
+
         if atomical_type == "FT":
             if mint_mode == "fixed":
                 max_supply = atomical.get("$max_supply", 0)
@@ -573,16 +571,41 @@ class HttpUnifiedAPIHandler(object):
         elif atomical_type == "NFT":
             mint_mode = ""
 
-        minted_amount = mint_count * mint_amount # total mint
+        if subtype == "decentralized":
+            atomical: dict = await self.session_mgr.bp.get_dft_mint_info_rpc_format_by_atomical_id(atomical_id)
+            mint_count = atomical["dft_info"]["mint_count"]
+            minted_amount = mint_count * mint_amount # total minted
+        elif subtype == "direct":
+            atomical: dict = await self.session_mgr.bp.get_ft_mint_info_rpc_format_by_atomical_id(atomical_id)
+            minted_amount = max_supply # entire mint in direct mint
+
+        location_summary: dict = atomical.get("location_summary", {})
+        holder_count = location_summary.get("unique_holders", 0)
+        circulating_supply = location_summary.get("circulating_supply", 0)
         burned_amount = minted_amount - circulating_supply
 
-        # TODO
-        deployedAt = 0 # unix timestamp
-        deployedAtHeight = 0
-        deployTxHash = ""
-        completedAt = None # unix timestamp
-        completedAtHeight = None
-        deployer_address = ""
+        # deployment data
+        commit_tx_id = mint_info.get("commit_txid")
+        commit_tx_height = mint_info.get("commit_height")
+
+        reveal_location_script: str = mint_info.get("reveal_location_script")
+        deployer_address = get_address_from_output_script(bytes.fromhex(reveal_location_script))
+
+        deployed_at = 0 # unix timestamp # TODO
+        deployed_at_height = commit_tx_height
+        deploy_tx_hash = commit_tx_id
+
+        # mint completion data
+        completed_at = None # unix timestamp
+        completed_at_height = None
+        if minted_amount == max_supply:
+            if subtype == "direct":
+                completed_at = deployed_at
+                completed_at_height = deployed_at_height
+            else:
+                # TODO
+                completed_at = None # unix timestamp
+                completed_at_height = None
 
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
         return format_response({
@@ -594,11 +617,11 @@ class HttpUnifiedAPIHandler(object):
             "mintedAmount": str(minted_amount),
             "burnedAmount": str(burned_amount),
             "decimals": get_decimals(),
-            "deployedAt": deployedAt,
-            "deployedAtHeight": deployedAtHeight,
-            "deployTxHash": deployTxHash,
-            "completedAt": completedAt,
-            "completedAtHeight": completedAtHeight,
+            "deployedAt": deployed_at,
+            "deployedAtHeight": deployed_at_height,
+            "deployTxHash": deploy_tx_hash,
+            "completedAt": completed_at,
+            "completedAtHeight": completed_at_height,
             "holdersCount": holder_count,
 
             # arc20-specific data
@@ -611,7 +634,7 @@ class HttpUnifiedAPIHandler(object):
                 "deployedBy": deployer_address,
                 "mintHeight": atomical.get("$mint_height", 0), # the block height this FT can start to be minted
                 "mintInfo": {
-                    "commitTxHash": mint_info.get("commit_txid"),
+                    "commitTxHash": commit_tx_id,
                     "commitIndex": mint_info.get("commit_index"), # commit tx output index of utxo used in reveal tx
                     "revealTxHash": mint_info.get("reveal_location_txid"),
                     "revealIndex": mint_info.get("reveal_location_index"), # reveal tx input index of utxo used to reveal
@@ -628,6 +651,8 @@ class HttpUnifiedAPIHandler(object):
         # parse wallet
         wallet = request.match_info.get("wallet", "")
         address = self._parse_addr(wallet)
+        if not address:
+            return format_response(None, 400, 'Address is required.')
 
         # parse block_height
         latest_block_height = self.db.db_height
