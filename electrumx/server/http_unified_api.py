@@ -235,6 +235,8 @@ class HttpUnifiedAPIHandler(object):
     async def get_arc20_balance(self, request: 'Request') -> 'Response':
         # parse wallet
         wallet = request.match_info.get("wallet", "")
+        if not wallet:
+            return format_response(None, 400, 'Wallet is required.')
         address = self._parse_addr(wallet)
         if not address:
             return format_response(None, 400, 'Invalid wallet.')
@@ -272,6 +274,8 @@ class HttpUnifiedAPIHandler(object):
         for idx, raw_query in enumerate(raw_queries):
             # parse wallet
             wallet = raw_query.get("wallet", "")
+            if not wallet:
+                return format_response(None, 400, f'query index {idx}: wallet is required.')
             address = self._parse_addr(wallet)
             if not address:
                 return format_response(None, 400, f'query index {idx}: invalid wallet.')
@@ -440,8 +444,12 @@ class HttpUnifiedAPIHandler(object):
     @error_handler
     async def get_arc20_transactions(self, request: 'Request') -> 'Response':
         # parse wallet (optional)
-        wallet = request.query.get("wallet", "")
-        address = self._parse_addr(wallet)
+        wallet = request.query.get("wallet")
+        address = None
+        if wallet is not None:
+            address = self._parse_addr(wallet)
+            if not address:
+                return format_response(None, 400, 'Invalid wallet.')
 
         # parse block_height
         latest_block_height = self.db.db_height
@@ -561,12 +569,7 @@ class HttpUnifiedAPIHandler(object):
         id = request.match_info.get("id", "")
         if not id:
             return format_response(None, 400, 'ID is required.')
-        
-        atomical_id = None
-        try:
-            atomical_id = self._parse_request_id(id)
-        except:
-            return format_response(None, 400, 'Invalid ID.')
+        atomical_id = self._parse_request_id(id)
         if not atomical_id:
             return format_response(None, 400, 'Invalid ID.')
         
@@ -705,9 +708,11 @@ class HttpUnifiedAPIHandler(object):
     async def get_arc20_utxos(self, request: 'Request') -> 'Response':
         # parse wallet
         wallet = request.match_info.get("wallet", "")
+        if not wallet:
+            return format_response(None, 400, 'Wallet is required.')
         address = self._parse_addr(wallet)
         if not address:
-            return format_response(None, 400, 'Address is required.')
+            return format_response(None, 400, 'Invalid wallet.')
 
         # parse block_height
         latest_block_height = self.db.db_height
