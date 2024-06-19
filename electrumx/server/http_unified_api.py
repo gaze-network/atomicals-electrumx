@@ -347,16 +347,35 @@ class HttpUnifiedAPIHandler(object):
         mints = {}
         mint_ticker = tx_payload['args'].get("mint_ticker", "")
         if mint_ticker:
-            atomical_id = self._resolve_ticker_to_atomical_id(mint_ticker)
-            mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id, True)
-            mint_amount = mint_info.get("$mint_amount", 0)
-            mints[atomical_id.hex()] = {
-                "amount": mint_amount,
-                "decimals": get_decimals(),
-            }
-            commit_txid = mint_info['commit_txid']
-            commit_tx_id = commit_txid.hex()
-            commit_index = mint_info.get('commit_index', 0)
+            tx_info_outputs: dict = tx_info.get("outputs", {})
+            mint_outputs: list = tx_info_outputs.get(0, []) # mint output should be in index 0
+            for output_data in mint_outputs:
+                atomica_id_str = output_data.get("atomical_id", "")
+                address = output_data.get("address", "")
+                mint_amount = output_data.get("value", 0)
+                pk_script = ""
+                if address:
+                    pk_script = get_script_from_address(address).hex()
+                output_map = {
+                    "index": output_data.get("index", ""),
+                    "id": atomica_id_str,
+                    "amount": str(mint_amount),
+                    "decimals": get_decimals(),
+                    "address": address,
+                    "pkScript": pk_script,
+                }
+                outputs.append(output_map)
+                prev_mint: dict | None = mints.get("atomica_id_str", None)
+                if not prev_mint:
+                    prev_mint = {
+                        "amount": "0",
+                        "decimals": get_decimals(),
+                    }
+                new_mint = {
+                    "amount": str(int(prev_mint["amount"])+mint_amount),
+                    "decimals": get_decimals(),
+                }
+                mints[atomica_id_str] = new_mint
 
         burns = {}
         for k, v in tx_burned_fts.items():
