@@ -11,7 +11,7 @@ from electrumx.lib.hash import HASHX_LEN, double_sha256, hash_to_hex_str, hex_st
 from electrumx.lib.script2addr import get_address_from_output_script, get_script_from_address
 from electrumx.lib.util_atomicals import DFT_MINT_MAX_MAX_COUNT_DENSITY, compact_to_location_id_bytes, location_id_bytes_to_compact, parse_protocols_operations_from_witness_array
 from electrumx.server.block_processor import BlockProcessor
-from electrumx.server.db import DB
+from electrumx.server.db import DB, UTXO
 from electrumx.server.http_session import HttpHandler
 
 if TYPE_CHECKING:
@@ -107,7 +107,7 @@ class HttpUnifiedAPIHandler(object):
         except:
             atomical_id = self._resolve_ticker_to_atomical_id(id)
             if not atomical_id:
-                raise Exception("Ticker is not found or is not confirmed.")
+                return None
         return atomical_id
 
     # check if this is address or pk_script
@@ -126,6 +126,17 @@ class HttpUnifiedAPIHandler(object):
         else:
             addr = wallet
         return addr
+    
+    # check if block height is valid
+    def _parse_block_height(self, block_height_str: str) -> int | None:
+        # empty string
+        if not block_height_str:
+            return None
+        # some character is not 0-9
+        if not block_height_str.isnumeric():
+            return None
+        block_height = int(block_height_str)
+        return block_height
     
     def _block_height_to_unix_timestamp(self, block_height: int) -> int:
         # TODO
@@ -230,17 +241,21 @@ class HttpUnifiedAPIHandler(object):
 
         # parse block_height
         latest_block_height = self.db.db_height
-        block_height = int(request.query.get('blockHeight', latest_block_height))
+        q_block_height = request.query.get("blockHeight")
+        block_height = latest_block_height
+        if q_block_height is not None:
+            block_height = self._parse_block_height(q_block_height)
+            if block_height is None:
+                return format_response(None, 400, 'Invalid block height.')
         
         # parse atomical_id
         id = request.query.get("id")
         atomical_id = None
         if id:
-            try:
-                atomical_id = self._parse_request_id(id)
-            except:
+            atomical_id = self._parse_request_id(id)
+            if not atomical_id:
                 return format_response(None, 400, 'Invalid ID.')
-
+        
         populated_balances = await self._get_populated_arc20_balances(address, atomical_id, block_height)
         return format_response({
             "blockHeight": block_height,
@@ -262,15 +277,19 @@ class HttpUnifiedAPIHandler(object):
                 return format_response(None, 400, f'query index {idx}: invalid wallet.')
             
             # parse block_height
-            block_height = int(raw_query.get('blockHeight', latest_block_height))
+            q_block_height = raw_query.get("blockHeight")
+            block_height = latest_block_height
+            if q_block_height is not None:
+                block_height = self._parse_block_height(q_block_height)
+                if block_height is None:
+                    return format_response(None, 400, f'query index {idx}: invalid block height.')
             
             # parse atomical_id
             id = raw_query.get("id")
             atomical_id = None
             if id:
-                try:
-                    atomical_id = self._parse_request_id(id)
-                except:
+                atomical_id = self._parse_request_id(id)
+                if not atomical_id:
                     return format_response(None, 400, f'query index {idx}: invalid ID.')
             
             # append to list
@@ -426,15 +445,19 @@ class HttpUnifiedAPIHandler(object):
 
         # parse block_height
         latest_block_height = self.db.db_height
-        block_height = int(request.query.get('blockHeight', latest_block_height))
+        q_block_height = request.query.get("blockHeight")
+        block_height = latest_block_height
+        if q_block_height is not None:
+            block_height = self._parse_block_height(q_block_height)
+            if block_height is None:
+                return format_response(None, 400, 'Invalid block height.')
         
         # parse atomical_id
         id = request.query.get("id")
         atomical_id = None
         if id:
-            try:
-                atomical_id = self._parse_request_id(id)
-            except:
+            atomical_id = self._parse_request_id(id)
+            if not atomical_id:
                 return format_response(None, 400, 'Invalid ID.')
 
         txs = []
@@ -472,18 +495,18 @@ class HttpUnifiedAPIHandler(object):
         id = request.match_info.get("id", "")
         if not id:
             return format_response(None, 400, 'ID is required.')
-        
-        atomical_id = None
-        try:
-            atomical_id = self._parse_request_id(id)
-        except:
-            return format_response(None, 400, 'Invalid ID.')
+        atomical_id = self._parse_request_id(id)
         if not atomical_id:
             return format_response(None, 400, 'Invalid ID.')
             
         # parse block_height
         latest_block_height = self.db.db_height
-        block_height = int(request.query.get('blockHeight', latest_block_height))
+        q_block_height = request.query.get("blockHeight")
+        block_height = latest_block_height
+        if q_block_height is not None:
+            block_height = self._parse_block_height(q_block_height)
+            if block_height is None:
+                return format_response(None, 400, 'Invalid block height.')
 
         # base data
         atomical = await self._get_atomical(atomical_id)
@@ -647,6 +670,37 @@ class HttpUnifiedAPIHandler(object):
             }
         })
     
+    async def _utxo_to_formatted(self, utxo: UTXO) -> 'dict':
+        tx_id_str = hash_to_hex_str(utxo.tx_hash)
+        output_index = utxo.tx_pos
+        location = compact_to_location_id_bytes(tx_id_str + "i" + str(output_index))
+        atomical_by_location = self.db.get_atomicals_by_location_extended_info_long_form(location)
+        location_info: dict = atomical_by_location.get("location_info", {})
+        atomical_amount = location_info.get("value", 0)
+        atomical_ids: list = atomical_by_location.get("atomicals", [])
+        
+        formatted_atomicals = []
+        # should be 0 or 1 item
+        for atomical_id in atomical_ids:
+            atomical = await self._get_atomical(atomical_id)
+            ticker = atomical.get("$ticker", "")
+            atomical_out = {
+                "atomicalId": location_id_bytes_to_compact(atomical_id),
+                "ticker": ticker,
+                "amount": str(atomical_amount),
+                "decimals": get_decimals(),
+            }
+            formatted_atomicals.append(atomical_out)
+        res = {
+            "txHash": tx_id_str,
+            "outputIndex": utxo.tx_pos,
+            "sats": utxo.value,
+            "extend": {
+                "atomicals": formatted_atomicals
+            }
+        }
+        return res
+    
     @error_handler
     async def get_arc20_utxos(self, request: 'Request') -> 'Response':
         # parse wallet
@@ -657,34 +711,32 @@ class HttpUnifiedAPIHandler(object):
 
         # parse block_height
         latest_block_height = self.db.db_height
-        block_height = int(request.query.get('blockHeight', latest_block_height))
+        q_block_height = request.query.get("blockHeight")
+        block_height = latest_block_height
+        if q_block_height is not None:
+            block_height = self._parse_block_height(q_block_height)
+            if block_height is None:
+                return format_response(None, 400, 'Invalid block height.')
         
         # parse atomical_id
         id = request.query.get("id")
         atomical_id = None
         if id:
-            try:
-                atomical_id = self._parse_request_id(id)
-            except:
+            atomical_id = self._parse_request_id(id)
+            if not atomical_id:
                 return format_response(None, 400, 'Invalid ID.')
-
-        # TODO
-        # {
-        #     "txHash": string,
-        #     "outputIndex": number,
-        #     "sats": number, // sats amount in utxo
-        #     "extend": {
-        #         "atomicals": [
-        #             {
-        #                 "atomicalId": string,
-        #                 "ticker": string,
-        #                 "amount": string, // numeric string
-        #                 "decimals": number
-        #             }
-        #         ]
-        #     }
-        # }
+        
         formatted_results = []
+
+        # bypass for latest_block
+        if block_height == latest_block_height:
+            pk_scriptb = get_script_from_address(address)
+            hashX = scripthash_to_hashX(sha256(pk_scriptb))
+            utxos: list[UTXO] = await self.db.all_utxos(hashX)
+            formatted_results = await asyncio.gather(*[self._utxo_to_formatted(utxo) for utxo in utxos])
+        else:
+            # TODO
+            return format_response(None, 400, 'impl')
         
         return format_response({
             "blockHeight": block_height,
