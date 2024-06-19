@@ -9,7 +9,7 @@ from aiohttp.web_urldispatcher import UrlDispatcher
 from electrumx.lib import util
 from electrumx.lib.hash import HASHX_LEN, double_sha256, hash_to_hex_str, hex_str_to_hash, sha256
 from electrumx.lib.script2addr import get_address_from_output_script, get_script_from_address
-from electrumx.lib.util_atomicals import DFT_MINT_MAX_MAX_COUNT_DENSITY, compact_to_location_id_bytes, location_id_bytes_to_compact
+from electrumx.lib.util_atomicals import DFT_MINT_MAX_MAX_COUNT_DENSITY, compact_to_location_id_bytes, location_id_bytes_to_compact, parse_protocols_operations_from_witness_array
 from electrumx.server.block_processor import BlockProcessor
 from electrumx.server.db import DB
 from electrumx.server.http_session import HttpHandler
@@ -126,6 +126,10 @@ class HttpUnifiedAPIHandler(object):
         else:
             addr = wallet
         return addr
+    
+    def _block_height_to_unix_timestamp(self, block_height: int) -> int:
+        # TODO
+        return 0
 
     @error_handler
     async def get_block_height(self, request: 'Request') -> 'Response':
@@ -285,8 +289,8 @@ class HttpUnifiedAPIHandler(object):
         tx_data = await self.session_mgr.get_transaction_detail(tx_hash)
         block_height = tx_data.get("height", 0)
         tx_num = tx_data.get("tx_num", 0)
-        tx_info = tx_data.get("info", {})
-        tx_transfers = tx_data.get("transfers", {})
+        tx_info: dict = tx_data.get("info", {})
+        tx_transfers: dict = tx_data.get("transfers", {})
         tx_op = tx_data.get("op", "")
 
         if op and op != tx_op:
@@ -300,9 +304,9 @@ class HttpUnifiedAPIHandler(object):
 
         # tx_transfers distribution
         # contains inputs, outputs, is_burned, burned_fts, is_cleanly_assigned
-        tx_inputs = tx_transfers.get("inputs", {})
-        tx_outputs = tx_transfers.get("outputs", {})
-        tx_burned_fts = tx_transfers.get("burned_fts", {})
+        tx_inputs: dict[int, list[dict]] = tx_transfers.get("inputs", {})
+        tx_outputs: dict[int, list[dict]] = tx_transfers.get("outputs", {})
+        tx_burned_fts: dict = tx_transfers.get("burned_fts", {})
 
         commit_tx_id = "" # TODO
         commit_index = 0 # TODO
@@ -348,7 +352,7 @@ class HttpUnifiedAPIHandler(object):
         mint_ticker = tx_payload['args'].get("mint_ticker", "")
         if mint_ticker:
             tx_info_outputs: dict = tx_info.get("outputs", {})
-            mint_outputs: list = tx_info_outputs.get(0, []) # mint output should be in index 0
+            mint_outputs: list[dict] = tx_info_outputs.get(0, []) # mint output should be in index 0
             for output_data in mint_outputs:
                 atomica_id_str = output_data.get("atomical_id", "")
                 address = output_data.get("address", "")
@@ -392,7 +396,7 @@ class HttpUnifiedAPIHandler(object):
             "txHash": tx_hash,
             "blockHeight": block_height,
             "index": tx_num,
-            "timestamp": 0, # unix timestamp # TODO
+            "timestamp": self._block_height_to_unix_timestamp(block_height),
             "inputs": inputs,
             "outputs": outputs,
             "mints": mints,
@@ -591,21 +595,20 @@ class HttpUnifiedAPIHandler(object):
         reveal_location_script: str = mint_info.get("reveal_location_script")
         deployer_address = get_address_from_output_script(bytes.fromhex(reveal_location_script))
 
-        deployed_at = 0 # unix timestamp # TODO
         deployed_at_height = commit_tx_height
+        deployed_at = self._block_height_to_unix_timestamp(deployed_at_height)
         deploy_tx_hash = commit_tx_id
 
         # mint completion data
-        completed_at = None # unix timestamp
         completed_at_height = None
+        completed_at = None # unix timestamp
         if minted_amount == max_supply:
             if subtype == "direct":
-                completed_at = deployed_at
                 completed_at_height = deployed_at_height
+                completed_at = deployed_at
             else:
-                # TODO
-                completed_at = None # unix timestamp
-                completed_at_height = None
+                completed_at_height = 0 # TODO
+                completed_at = self._block_height_to_unix_timestamp(completed_at_height)
 
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
         return format_response({
@@ -637,7 +640,7 @@ class HttpUnifiedAPIHandler(object):
                     "commitTxHash": commit_tx_id,
                     "commitIndex": mint_info.get("commit_index"), # commit tx output index of utxo used in reveal tx
                     "revealTxHash": mint_info.get("reveal_location_txid"),
-                    "revealIndex": mint_info.get("reveal_location_index"), # reveal tx input index of utxo used to reveal
+                    "revealIndex": mint_info.get("reveal_location_index"),
                     "args": mint_info.get("args", {}), # raw atomicals operation payload
                     "metadata": mint_info.get("meta", {}) # metadata.json used during deployment
                 },
