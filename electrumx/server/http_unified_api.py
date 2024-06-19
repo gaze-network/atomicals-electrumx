@@ -748,6 +748,17 @@ class HttpUnifiedAPIHandler(object):
             # TODO
             return format_response(None, 500, 'impl')
         
+        # filter by atomical_id
+        if atomical_id:
+            atomical_id_str = location_id_bytes_to_compact(atomical_id)
+            filtered_formatted = []
+            for e in formatted_results:
+                atomical_list = e["extend"]["atomicals"]
+                found = atomical_id_str in [a["atomicalId"] for a in atomical_list]
+                if found:
+                    filtered_formatted.append(e)
+            formatted_results = filtered_formatted
+
         return format_response({
             "blockHeight": block_height,
             "list": formatted_results,
