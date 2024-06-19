@@ -285,16 +285,13 @@ class HttpUnifiedAPIHandler(object):
             "list": formatted_results
         })
     
-    async def _get_tx_detail(self, tx_hash: str, op: str | None) -> dict | None:
+    async def _get_tx_detail(self, tx_hash: str) -> dict | None:
         tx_data = await self.session_mgr.get_transaction_detail(tx_hash)
         block_height = tx_data.get("height", 0)
         tx_num = tx_data.get("tx_num", 0)
         tx_info: dict = tx_data.get("info", {})
         tx_transfers: dict = tx_data.get("transfers", {})
         tx_op = tx_data.get("op", "")
-
-        if op and op != tx_op:
-            return None
         
         tx_payload = tx_info.get("payload", None)
         if not tx_payload:
@@ -440,14 +437,6 @@ class HttpUnifiedAPIHandler(object):
             except:
                 return format_response(None, 400, 'Invalid ID.')
 
-        # parse op
-        op_str = request.query.get("op", "")
-        op_num = None
-        if op_str:
-            op_num = self.session_mgr.bp.op_list.get(op_str, None)
-            if not op_num:
-                return format_response(None, 400, 'Invalid Op.')
-
         txs = []
         tx_hashes = []
         if not (address or id):
@@ -457,7 +446,7 @@ class HttpUnifiedAPIHandler(object):
             # get all tx filter by id
             reverse = False
             hashX = double_sha256(atomical_id)
-            history_data, _ = await self.session_mgr.get_history_op(hashX, -1, 0, op_num, reverse)
+            history_data, _ = await self.session_mgr.get_history_op(hashX, -1, 0, None, reverse)
             for history in history_data:
                 tx_hash, _ = self.db.fs_tx_hash(history["tx_num"])
                 tx_hashes.append(hash_to_hex_str(tx_hash))
@@ -466,7 +455,7 @@ class HttpUnifiedAPIHandler(object):
             # TODO
             tx_hashes = []
 
-        txs = await asyncio.gather(*[self._get_tx_detail(tx, op_str) for tx in tx_hashes])
+        txs = await asyncio.gather(*[self._get_tx_detail(tx) for tx in tx_hashes])
         # filter None out
         res_txs = []
         for tx in txs:
