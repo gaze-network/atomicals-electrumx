@@ -308,8 +308,17 @@ class HttpUnifiedAPIHandler(object):
         tx_outputs: dict[int, list[dict]] = tx_transfers.get("outputs", {})
         tx_burned_fts: dict = tx_transfers.get("burned_fts", {})
 
-        commit_tx_id = "" # TODO
-        commit_index = 0 # TODO
+        commit_tx_id = ""
+        commit_index = 0
+
+        tx_hashb = hex_str_to_hash(tx_hash)
+        raw_tx = self.db.get_raw_tx_by_tx_hash(tx_hashb)
+        tx, _tx_hash = self.env.coin.DESERIALIZER(raw_tx, 0).read_tx_and_hash()
+        assert tx_hashb == _tx_hash
+        operation_found_at_inputs = parse_protocols_operations_from_witness_array(tx, tx_hash, True)
+        if operation_found_at_inputs:
+            commit_tx_id = hash_to_hex_str(operation_found_at_inputs.get("commit_txid"))
+            commit_index = operation_found_at_inputs.get("commit_index")
 
         inputs = []
         # if multiple FTs in same utxo, 
