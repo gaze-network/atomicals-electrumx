@@ -308,8 +308,8 @@ class HttpUnifiedAPIHandler(object):
         tx_outputs: dict[int, list[dict]] = tx_transfers.get("outputs", {})
         tx_burned_fts: dict = tx_transfers.get("burned_fts", {})
 
-        commit_tx_id = ""
-        commit_index = 0
+        commit_tx_id = None
+        commit_index = None
 
         tx_hashb = hex_str_to_hash(tx_hash)
         raw_tx = self.db.get_raw_tx_by_tx_hash(tx_hashb)
