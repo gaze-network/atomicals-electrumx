@@ -316,11 +316,8 @@ class HttpUnifiedAPIHandler(object):
         tx_transfers: dict = tx_data.get("transfers", {})
         tx_op = tx_data.get("op", "")
         
-        tx_payload = tx_info.get("payload", None)
-        if not tx_payload:
-            tx_payload = {
-                "args": {}
-            }
+        tx_payload: dict = tx_info.get("payload", {})
+        tx_payload_args: dict = tx_payload.get("args", {})
 
         # tx_transfers distribution
         # contains inputs, outputs, is_burned, burned_fts, is_cleanly_assigned
@@ -378,7 +375,7 @@ class HttpUnifiedAPIHandler(object):
                 outputs.append(output_map)
 
         mints = {}
-        mint_ticker = tx_payload['args'].get("mint_ticker", "")
+        mint_ticker = tx_payload_args.get("mint_ticker", "")
         if mint_ticker:
             tx_info_outputs: dict = tx_info.get("outputs", {})
             mint_outputs: list[dict] = tx_info_outputs.get(0, []) # mint output should be in index 0
@@ -452,9 +449,8 @@ class HttpUnifiedAPIHandler(object):
                 return format_response(None, 400, 'Invalid wallet.')
 
         # parse block_height
-        latest_block_height = self.db.db_height
         q_block_height = request.query.get("blockHeight")
-        block_height = latest_block_height
+        block_height = None
         if q_block_height is not None:
             block_height = self._parse_block_height(q_block_height)
             if block_height is None:
@@ -467,12 +463,21 @@ class HttpUnifiedAPIHandler(object):
             atomical_id = self._parse_request_id(id)
             if not atomical_id:
                 return format_response(None, 400, 'Invalid ID.')
+            
+        # no parameters passed, default to filter by latest_block_height
+        if not (address or atomical_id or block_height):
+            latest_block_height = self.db.db_height
+            block_height = latest_block_height
 
         txs = []
         tx_hashes = []
-        if not (address or id):
+
+        # if has block_height filter, use this way first
+        if block_height:
             # get all tx in single block_height
             tx_hashes = self.db.get_atomicals_block_txs(block_height)
+        
+        # no block_height found, use more exhausive search
         elif atomical_id:
             # get all tx filter by id
             reverse = False
@@ -741,7 +746,7 @@ class HttpUnifiedAPIHandler(object):
             formatted_results = await asyncio.gather(*[self._utxo_to_formatted(utxo) for utxo in utxos])
         else:
             # TODO
-            return format_response(None, 400, 'impl')
+            return format_response(None, 500, 'impl')
         
         return format_response({
             "blockHeight": block_height,
