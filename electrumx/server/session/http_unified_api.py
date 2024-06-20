@@ -553,12 +553,13 @@ class HttpUnifiedAPIHandler(object):
         atomical = await self._get_atomical(atomical_id)
 
         formatted_results = []
+        max_supply = 0
+        mint_amount = 0
         if block_height == latest_block_height:
             atomical: dict = await self.session_mgr.db.populate_extended_atomical_holder_info(atomical_id, atomical)
-            max_supply = 0
-            mint_amount = 0
             if atomical["type"] == "FT":
-                if atomical["$mint_mode"] == "fixed":
+                mint_mode = atomical.get("$mint_mode", "fixed") == "fixed"
+                if mint_mode == "fixed":
                     max_supply = atomical.get('$max_supply', 0)
                 else:
                     max_supply = atomical.get('$max_supply', -1)
