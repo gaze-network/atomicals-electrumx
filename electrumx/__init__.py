@@ -3,6 +3,3 @@ version = f'gaze-electrumx-v{__version__}'
 version_short = __version__
 gaze_db_version = 1
 gaze_event_hash_version = 1
-
-from electrumx.server.controller import Controller
-from electrumx.server.env import Env
