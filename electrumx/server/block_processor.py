@@ -898,6 +898,11 @@ class BlockProcessor:
             self.distmint_data_cache[atomical_id] = {}
         self.distmint_data_cache[atomical_id][location_id] = value
 
+    def put_mint_complete_data(self, atomical_id: bytes, height: int):
+        self.logger.debug(f'put_mint_complete_data: atomical_id={atomical_id.hex()}, height={height}')
+        put_general_data = self.general_data_cache.__setitem__
+        put_general_data(b'mc' + atomical_id, pack_le_uint32(height))
+
     # Save atomicals UTXO to cache that will be flushed to db
     def put_atomicals_utxo(self, location_id, atomical_id, value):
         self.logger.debug(
@@ -1202,6 +1207,10 @@ class BlockProcessor:
                 f"location_id={location_id_bytes_to_compact(location_id)}, "
                 f"atomical_id={location_id_bytes_to_compact(atomical_id)}"
             )
+    
+    def delete_mint_complete_data(self, atomical_id: bytes):
+        mint_complete_key = b'mc' + atomical_id
+        self.delete_general_data(mint_complete_key)
 
     def log_subrealm_request(self, method, msg, status, subrealm, parent_realm_atomical_id, height):
         self.logger.info(
@@ -3289,6 +3298,7 @@ class BlockProcessor:
             # Assess whether we allow the mint based on 'fixed' or 'perpetual' mint modes
             # The perpetual mint mode will derive the minimum expected bitworkr/c needed given the quantity of already minted units
             allow_mint = False
+            will_complete_mint = False
             if mint_mode == "perpetual":
                 # If the perpetual token as a global max, then validate
                 max_mints_global = mint_info_for_ticker.get("$max_mints_global")
@@ -3302,6 +3312,8 @@ class BlockProcessor:
                             f"create_or_delete_decentralized_mint_outputs found invalid mint infinit operation because it is minted out completely due to global max mints. {hash_to_hex_str(tx_hash)}. Ignoring..."
                         )
                         return None
+                    if decentralized_mints + 1 == max_mints_global:
+                        will_complete_mint = True
 
                 self.logger.debug(
                     f"create_or_delete_decentralized_mint_outputs: found perpetual mint request in {hash_to_hex_str(tx_hash)} for {ticker}. Checking for any POW in distributed mint record..."
@@ -3411,6 +3423,8 @@ class BlockProcessor:
                                 f"create_or_delete_decentralized_mint_output: not is_mint_pow_valid {hash_to_hex_str(tx_hash)}, mint_pow_reveal={mint_pow_reveal}, atomicals_operations_found_at_inputs={atomicals_operations_found_at_inputs}..."
                             )
                             return None
+                    if decentralized_mints + 1 == max_mints:
+                        will_complete_mint = True
                     allow_mint = True
 
             if allow_mint:
@@ -3420,6 +3434,8 @@ class BlockProcessor:
                     assert len(atomicals_found_list) > 0
                     self.delete_general_data(the_key)
                     self.delete_decentralized_mint_data(dmt_mint_atomical_id, location)
+                    # just delete mint complete data if it exists, since it would never be complete after delete mint
+                    self.delete_mint_complete_data(dmt_mint_atomical_id)
                     return dmt_mint_atomical_id
                 else:
                     put_general_data = self.general_data_cache.__setitem__
@@ -3428,6 +3444,8 @@ class BlockProcessor:
                     put_bytes: bytes = hashX + scripthash + sat_value + atomical_value + tx_numb
                     self.put_atomicals_utxo(location, dmt_mint_atomical_id, put_bytes)
                     self.put_decentralized_mint_data(dmt_mint_atomical_id, location, scripthash + sat_value)
+                    if will_complete_mint:
+                        self.put_mint_complete_data(dmt_mint_atomical_id, height)
                     self.logger.debug(
                         f"create_or_delete_decentralized_mint_outputs found valid request in {hash_to_hex_str(tx_hash)} for {ticker}. Granting and creating decentralized mint..."
                     )
