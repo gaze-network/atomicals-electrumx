@@ -681,6 +681,10 @@ class HttpUnifiedAPIHandler(object):
                 completed_at_height = self.session_mgr.db.get_mint_completed_at_height(atomical_id)
                 if completed_at_height:
                     completed_at = self._block_height_to_unix_timestamp(completed_at_height)
+        # clear historical data
+        if completed_at_height > block_height:
+            completed_at_height = None
+            completed_at = None
 
         # change time-sensitive data from block_height
         # if block_height != latest_block_height:
