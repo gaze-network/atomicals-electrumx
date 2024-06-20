@@ -135,7 +135,9 @@ class HttpUnifiedAPIHandler(object):
         return block_height
     
     def _block_height_to_unix_timestamp(self, block_height: int) -> int:
-        # TODO
+        db_block_ts = self.session_mgr.db.get_block_timestamp(block_height)
+        if db_block_ts:
+            return db_block_ts
         return 0
 
     @error_handler
@@ -674,8 +676,9 @@ class HttpUnifiedAPIHandler(object):
                 completed_at_height = deployed_at_height
                 completed_at = deployed_at
             else:
-                completed_at_height = 0 # TODO
-                completed_at = self._block_height_to_unix_timestamp(completed_at_height)
+                completed_at_height = self.session_mgr.db.get_mint_completed_at_height(atomical_id)
+                if completed_at_height:
+                    completed_at = self._block_height_to_unix_timestamp(completed_at_height)
 
         # change time-sensitive data from block_height
         # if block_height != latest_block_height:
