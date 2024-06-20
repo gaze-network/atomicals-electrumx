@@ -286,10 +286,11 @@ class HttpUnifiedAPIHandler(object):
                 return format_response(None, 400, f'query index {idx}: invalid wallet.')
             
             # parse block_height
+            # this is from json, so q_block_height may be number itself
             q_block_height = raw_query.get("blockHeight")
             block_height = latest_block_height
             if q_block_height is not None:
-                block_height = self._parse_block_height(q_block_height)
+                block_height = self._parse_block_height(str(q_block_height))
                 if block_height is None:
                     return format_response(None, 400, f'query index {idx}: invalid block height.')
             
