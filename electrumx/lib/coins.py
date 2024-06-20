@@ -246,6 +246,11 @@ class Coin(CoinHeaderHashMixin, CoinShortNameMixin):
     def header_prevhash(cls, header):
         """Given a header return previous hash"""
         return header[4:36]
+    
+    @classmethod
+    def header_timestamp(cls, header):
+        '''Given a header return timestamp'''
+        return struct.unpack('<I', header[68:72])[0]
 
     @classmethod
     def static_header_offset(cls, height):

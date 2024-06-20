@@ -506,6 +506,7 @@ class BlockProcessor:
         for block in blocks:
             height += 1
             is_unspendable = is_unspendable_genesis if height >= genesis_activation else is_unspendable_legacy
+            self.put_block_timestamp(height, block.header)
             undo_info, atomicals_undo_info = self.advance_txs(block.transactions, is_unspendable, block.header, height)
             if height >= min_height:
                 self.undo_infos.append((undo_info, height))
@@ -518,6 +519,14 @@ class BlockProcessor:
         self.tip = self.coin.header_hash(headers[-1])
         self.tip_advanced_event.set()
         self.tip_advanced_event.clear()
+    
+    def put_block_timestamp(self, height: int, header: bytes):
+        timestamp = self.coin.header_timestamp(header)
+        put_general_data = self.general_data_cache.__setitem__
+        put_general_data(b'ts' + pack_le_uint32(height), pack_le_uint32(timestamp))
+
+    def delete_block_timestamp(self, height: int):
+        self.delete_general_data(b'ts' + pack_le_uint32(height))
 
     def get_atomicals_block_txs(self, height):
         return self.db.get_atomicals_block_txs(height)
@@ -3960,6 +3969,7 @@ class BlockProcessor:
             self.tip = coin.header_prevhash(block.header)
             is_unspendable = is_unspendable_genesis if self.height >= genesis_activation else is_unspendable_legacy
             self.backup_txs(block.transactions, is_unspendable)
+            self.delete_block_timestamp(self.height)
             self.height -= 1
             self.db.tx_counts.pop()
             self.db.atomical_counts.pop()

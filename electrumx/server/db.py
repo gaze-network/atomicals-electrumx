@@ -255,6 +255,10 @@ class DB:
         # Key: b'op' + txnum
         # Value: op in txnum
         # "save the op by txnum"
+        # ---
+        # Key: b'ts' + block_height
+        # Value: unix_timestamp
+        # "maps block height to block timestamp (unix)"
         #
         #
         #
@@ -1319,6 +1323,14 @@ class DB:
     # Get general data by key
     def get_general_data(self, key):
         return self.utxo_db.get(key)
+    
+    def get_block_timestamp(self, height: int) -> 'int | None':
+        block_timestamp_key = b'ts' + pack_le_uint32(height)
+        block_timestamp_value = self.utxo_db.get(block_timestamp_key)
+        if block_timestamp_value:
+            block_timestamp, = unpack_le_uint32(block_timestamp_value)
+            return block_timestamp
+        return None
 
     # Get all of the atomicals that passed through the location
     # Never deleted, kept for historical purposes.
