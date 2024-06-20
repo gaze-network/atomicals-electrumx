@@ -2,21 +2,22 @@ import asyncio
 import base64
 from dataclasses import dataclass
 import json
+from aiohttp.web_urldispatcher import UrlDispatcher
+from aiohttp.web import json_response
+from typing import TYPE_CHECKING
+
 from electrumx.lib.hash import HASHX_LEN, hex_str_to_hash, sha256
 from electrumx.lib.script2addr import get_address_from_output_script, get_script_from_address
+import electrumx.lib.util as util
 from electrumx.lib.util_atomicals import DFT_MINT_MAX_MAX_COUNT_DENSITY, compact_to_location_id_bytes, location_id_bytes_to_compact
 from electrumx.server.block_processor import BlockProcessor
 from electrumx.server.db import DB
-from electrumx.server.http_session import HttpHandler, scripthash_to_hashX
-import electrumx.lib.util as util
-from aiohttp.web_urldispatcher import UrlDispatcher
-from typing import TYPE_CHECKING
-from aiohttp.web import json_response
+
 if TYPE_CHECKING:
-    from electrumx.server.env import Env
-    from typing import Optional
-    from electrumx.server.session import SessionManager
     from aiohttp.web import Request, Response
+    from typing import Optional
+    from electrumx.server.env import Env
+    from electrumx.server.session.session_manager import SessionManager
 
 class JSONBytesEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -76,13 +77,18 @@ class BalanceQuery:
     block_height: 'int | None'
 
 class HttpOPIHandler(object):
-    def __init__(self, session_mgr: 'SessionManager', env: 'Env', db: DB, bp: BlockProcessor, http_handler: HttpHandler):
+    def __init__(
+        self,
+        session_mgr: SessionManager,
+        env: 'Env', 
+        db: DB, 
+        bp: BlockProcessor
+    ):
         self.logger = util.class_logger(__name__, self.__class__.__name__)
         self.env = env
         self.db = db
         self.bp = bp
         self.session_mgr = session_mgr
-        self.http_handler = http_handler
 
     def error_handler(func):
         async def wrapper(self: 'HttpOPIHandler', *args, **kwargs):
@@ -147,7 +153,7 @@ class HttpOPIHandler(object):
     
     async def _get_atomical(self, atomical_id: bytes) -> 'Optional[str]':
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
-        atomical = await self.http_handler.atomical_id_get(compact_atomical_id)
+        atomical = await self.session_mgr.atomical_id_get(compact_atomical_id)
         return atomical
     
     async def _get_populated_arc20_balances(self, address: str, atomical_id: 'bytes | None', block_height: int):

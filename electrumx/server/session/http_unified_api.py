@@ -10,12 +10,9 @@ from electrumx.lib import util
 from electrumx.lib.hash import HASHX_LEN, double_sha256, hash_to_hex_str, hex_str_to_hash, sha256
 from electrumx.lib.script2addr import get_address_from_output_script, get_script_from_address
 from electrumx.lib.util_atomicals import DFT_MINT_MAX_MAX_COUNT_DENSITY, compact_to_location_id_bytes, location_id_bytes_to_compact, parse_protocols_operations_from_witness_array
-from electrumx.server.block_processor import BlockProcessor
-from electrumx.server.db import DB, UTXO
-from electrumx.server.http_session import HttpHandler
+from electrumx.server.db import UTXO
 
 if TYPE_CHECKING:
-    from electrumx.server.env import Env
     from electrumx.server.controller import SessionManager
     from aiohttp.web import Request, Response
 
@@ -61,13 +58,12 @@ class BalanceQuery:
     block_height: 'int | None'
 
 class HttpUnifiedAPIHandler(object):
-    def __init__(self, session_mgr: 'SessionManager', env: 'Env', db: DB, bp: BlockProcessor, http_handler: HttpHandler):
+    def __init__(
+        self,
+        session_mgr: "SessionManager",
+    ):
         self.logger = util.class_logger(__name__, self.__class__.__name__)
-        self.env = env
-        self.db = db
-        self.bp = bp
         self.session_mgr = session_mgr
-        self.http_handler = http_handler
 
     def error_handler(func):
         async def wrapper(self: 'HttpUnifiedAPIHandler', *args, **kwargs):
@@ -144,16 +140,16 @@ class HttpUnifiedAPIHandler(object):
 
     @error_handler
     async def get_block_height(self, request: 'Request') -> 'Response':
-        block_height = self.db.db_height
-        block_hash = self.db.get_atomicals_block_hash(block_height)
+        block_height = self.session_mgr.db.db_height
+        block_hash = self.session_mgr.db.get_atomicals_block_hash(block_height)
         return format_response({
             "hash": block_hash,
             "height": block_height,
         })
 
     def _process_balance(self, address: str, balances: 'dict[bytes, int]', tx_data):
-        inputs = tx_data['transfers']['inputs']
-        outputs = tx_data['transfers']['outputs']
+        inputs: dict = tx_data['transfers']['inputs']
+        outputs: dict = tx_data['transfers']['outputs']
         for _, input_atomicals in inputs.items():
             for input_atomical in input_atomicals:
                 if input_atomical['address'] == address and input_atomical['type'] == 'FT':
@@ -182,8 +178,15 @@ class HttpUnifiedAPIHandler(object):
 
     async def _get_atomical(self, atomical_id: bytes) -> 'dict':
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
-        atomical = await self.http_handler.atomical_id_get(compact_atomical_id)
+        atomical = await self.session_mgr.atomical_id_get(compact_atomical_id)
         return atomical
+    
+    async def _confirmed_history(self, hashX):
+        # Note history is ordered
+        history, _ = await self.session_mgr.limited_history(hashX)
+        conf = [{'tx_hash': hash_to_hex_str(tx_hash), 'height': height}
+                for tx_hash, height in history]
+        return conf
 
     async def _get_populated_arc20_balances(self, address: str, atomical_id: 'bytes | None', block_height: int):
         pk_scriptb = get_script_from_address(address)
@@ -193,13 +196,13 @@ class HttpUnifiedAPIHandler(object):
         hashX = scripthash_to_hashX(script_hash)
         if not hashX:
             raise Exception('Invalid hashX') # should not happen since we are using sha256
-        history_data = await self.http_handler.confirmed_history(hashX)
+        history_data = await self._confirmed_history(hashX)
         # only use transactions after ATOMICALS_ACTIVATION_HEIGHT and before block_height
-        history_data = [x for x in history_data if self.env.coin.ATOMICALS_ACTIVATION_HEIGHT <= x["height"] and x["height"] <= block_height]
+        history_data = [x for x in history_data if self.session_mgr.env.coin.ATOMICALS_ACTIVATION_HEIGHT <= x["height"] and x["height"] <= block_height]
         
         history_list = []
         for history in list(history_data):
-            tx_num, _ = self.db.get_tx_num_height_from_tx_hash(hex_str_to_hash(history["tx_hash"]))
+            tx_num, _ = self.session_mgr.db.get_tx_num_height_from_tx_hash(hex_str_to_hash(history["tx_hash"]))
             history['tx_num'] = tx_num
             history_list.append(history)
 
@@ -213,13 +216,13 @@ class HttpUnifiedAPIHandler(object):
         # populate atomical objects
         atomical_ids = list(balances.keys())
         atomicals_list = await asyncio.gather(*[self._get_atomical(atomical_id) for atomical_id in atomical_ids])
-        atomicals = {atomical_id: atomical for atomical_id, atomical in zip(atomical_ids, atomicals_list)}
+        atomicals: dict[bytes, dict] = {atomical_id: atomical for atomical_id, atomical in zip(atomical_ids, atomicals_list)}
 
         populated_balances: 'list[dict]' = [] # atomical_id -> { "amount": int, "ticker": str | None }
         for atomical_id, amount in balances.items():
             atomical = atomicals.get(atomical_id)
             if atomical:
-                atomical = await self.db.populate_extended_atomical_holder_info(atomical_id, atomical)
+                atomical: dict = await self.session_mgr.db.populate_extended_atomical_holder_info(atomical_id, atomical)
                 ticker = atomical.get("$ticker", "")
                 balance = {
                     "amount": str(amount),
@@ -242,7 +245,7 @@ class HttpUnifiedAPIHandler(object):
             return format_response(None, 400, 'Invalid wallet.')
 
         # parse block_height
-        latest_block_height = self.db.db_height
+        latest_block_height = self.session_mgr.db.db_height
         q_block_height = request.query.get("blockHeight")
         block_height = latest_block_height
         if q_block_height is not None:
@@ -266,9 +269,9 @@ class HttpUnifiedAPIHandler(object):
     
     @error_handler
     async def get_arc20_balances_batch(self, request: 'Request') -> 'Response':
-        body = await request.json()
+        body: dict = await request.json()
         queries: 'list[BalanceQuery]' = []
-        latest_block_height = self.db.db_height
+        latest_block_height = self.session_mgr.db.db_height
 
         raw_queries: 'list[dict]' = body.get('queries', [])
         for idx, raw_query in enumerate(raw_queries):
@@ -329,8 +332,8 @@ class HttpUnifiedAPIHandler(object):
         commit_index = None
 
         tx_hashb = hex_str_to_hash(tx_hash)
-        raw_tx = self.db.get_raw_tx_by_tx_hash(tx_hashb)
-        tx, _tx_hash = self.env.coin.DESERIALIZER(raw_tx, 0).read_tx_and_hash()
+        raw_tx = self.session_mgr.db.get_raw_tx_by_tx_hash(tx_hashb)
+        tx, _tx_hash = self.session_mgr.env.coin.DESERIALIZER(raw_tx, 0).read_tx_and_hash()
         assert tx_hashb == _tx_hash
         operation_found_at_inputs = parse_protocols_operations_from_witness_array(tx, tx_hash, True)
         if operation_found_at_inputs:
@@ -429,6 +432,7 @@ class HttpUnifiedAPIHandler(object):
             f_atomical_id_str = location_id_bytes_to_compact(f_atomical_id)
             found_input = f_atomical_id_str in [e["id"] for e in inputs]
             fount_output = f_atomical_id_str in [e["id"] for e in outputs]
+            # TODO: more place to check?
             if not(found_input or fount_output):
                 return None
 
@@ -480,7 +484,7 @@ class HttpUnifiedAPIHandler(object):
             
         # no parameters passed, default to filter by latest_block_height
         if not (address or atomical_id or block_height):
-            latest_block_height = self.db.db_height
+            latest_block_height = self.session_mgr.db.db_height
             block_height = latest_block_height
 
         txs = []
@@ -489,7 +493,7 @@ class HttpUnifiedAPIHandler(object):
         # if has block_height filter, use this way first
         if block_height:
             # get all tx in single block_height
-            tx_hashes = self.db.get_atomicals_block_txs(block_height)
+            tx_hashes = self.session_mgr.db.get_atomicals_block_txs(block_height)
         
         # no block_height found, use more exhausive search
         elif atomical_id:
@@ -498,7 +502,7 @@ class HttpUnifiedAPIHandler(object):
             hashX = double_sha256(atomical_id)
             history_data, _ = await self.session_mgr.get_history_op(hashX, -1, 0, None, reverse)
             for history in history_data:
-                tx_hash, _ = self.db.fs_tx_hash(history["tx_num"])
+                tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
                 tx_hashes.append(hash_to_hex_str(tx_hash))
             
             # use atomical_id = None to skip filtering check
@@ -534,7 +538,7 @@ class HttpUnifiedAPIHandler(object):
             return format_response(None, 400, 'Invalid ID.')
             
         # parse block_height
-        latest_block_height = self.db.db_height
+        latest_block_height = self.session_mgr.db.db_height
         q_block_height = request.query.get("blockHeight")
         block_height = latest_block_height
         if q_block_height is not None:
@@ -547,7 +551,7 @@ class HttpUnifiedAPIHandler(object):
 
         formatted_results = []
         if block_height == latest_block_height:
-            atomical = await self.db.populate_extended_atomical_holder_info(atomical_id, atomical)
+            atomical: dict = await self.session_mgr.db.populate_extended_atomical_holder_info(atomical_id, atomical)
             max_supply = 0
             mint_amount = 0
             if atomical["type"] == "FT":
@@ -556,7 +560,9 @@ class HttpUnifiedAPIHandler(object):
                 else:
                     max_supply = atomical.get('$max_supply', -1)
                     if max_supply < 0:
-                        mint_amount = atomical.get("mint_info", {}).get("args", {}).get("mint_amount")
+                        mint_info: dict = atomical.get("mint_info", {})
+                        mint_info_args: dict = mint_info.get("args", {})
+                        mint_amount = mint_info_args.get("mint_amount", 0)
                         max_supply = DFT_MINT_MAX_MAX_COUNT_DENSITY * mint_amount
                 for holder in atomical.get("holders", []):
                     percent = holder['holding'] / max_supply
@@ -600,7 +606,7 @@ class HttpUnifiedAPIHandler(object):
             return format_response(None, 400, 'Invalid ID.')
         
         # parse block_height
-        latest_block_height = self.db.db_height
+        latest_block_height = self.session_mgr.db.db_height
         q_block_height = request.query.get("blockHeight")
         block_height = latest_block_height
         if q_block_height is not None:
@@ -616,6 +622,7 @@ class HttpUnifiedAPIHandler(object):
         subtype = atomical.get("subtype", "")
         mint_mode = atomical.get("$mint_mode", "")
         mint_info: dict = atomical.get("mint_info", {})
+        mint_info_args: dict = mint_info.get("args", {})
         ticker = atomical.get("$ticker", "")
 
         mint_count = 0
@@ -626,11 +633,11 @@ class HttpUnifiedAPIHandler(object):
         if atomical_type == "FT":
             if mint_mode == "fixed":
                 max_supply = atomical.get("$max_supply", 0)
-                mint_amount = mint_info.get("args", {}).get("mint_amount")
+                mint_amount = mint_info_args.get("mint_amount", 0)
             else:
                 max_supply = atomical.get("$max_supply", -1)
                 if max_supply < 0:
-                    mint_amount = mint_info.get("args", {}).get("mint_amount")
+                    mint_amount = mint_info_args.get("mint_amount", 0)
                     max_supply = DFT_MINT_MAX_MAX_COUNT_DENSITY * mint_amount
         elif atomical_type == "NFT":
             mint_mode = ""
@@ -705,7 +712,7 @@ class HttpUnifiedAPIHandler(object):
                     "commitIndex": mint_info.get("commit_index"), # commit tx output index of utxo used in reveal tx
                     "revealTxHash": mint_info.get("reveal_location_txid"),
                     "revealIndex": mint_info.get("reveal_location_index"),
-                    "args": mint_info.get("args", {}), # raw atomicals operation payload
+                    "args": mint_info_args, # raw atomicals operation payload
                     "metadata": mint_info.get("meta", {}) # metadata.json used during deployment
                 },
                 "subtype": subtype,
@@ -717,7 +724,7 @@ class HttpUnifiedAPIHandler(object):
         tx_id_str = hash_to_hex_str(utxo.tx_hash)
         output_index = utxo.tx_pos
         location = compact_to_location_id_bytes(tx_id_str + "i" + str(output_index))
-        atomical_by_location = self.db.get_atomicals_by_location_extended_info_long_form(location)
+        atomical_by_location = self.session_mgr.db.get_atomicals_by_location_extended_info_long_form(location)
         location_info: dict = atomical_by_location.get("location_info", {})
         atomical_amount = location_info.get("value", 0)
         atomical_ids: list = atomical_by_location.get("atomicals", [])
@@ -755,7 +762,7 @@ class HttpUnifiedAPIHandler(object):
             return format_response(None, 400, 'Invalid wallet.')
 
         # parse block_height
-        latest_block_height = self.db.db_height
+        latest_block_height = self.session_mgr.db.db_height
         q_block_height = request.query.get("blockHeight")
         block_height = latest_block_height
         if q_block_height is not None:
@@ -777,7 +784,7 @@ class HttpUnifiedAPIHandler(object):
         if block_height == latest_block_height:
             pk_scriptb = get_script_from_address(address)
             hashX = scripthash_to_hashX(sha256(pk_scriptb))
-            utxos: list[UTXO] = await self.db.all_utxos(hashX)
+            utxos: list[UTXO] = await self.session_mgr.db.all_utxos(hashX)
             formatted_results = await asyncio.gather(*[self._utxo_to_formatted(utxo) for utxo in utxos])
         else:
             # TODO
