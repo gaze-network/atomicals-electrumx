@@ -539,6 +539,9 @@ class BlockProcessor:
             if cache:
                 self.general_data_cache[key] = cache
         return cache
+    
+    def get_pk_script_at_location(self, location_id: bytes):
+        return self.get_general_data_with_cache(b"po" + location_id)
 
     # Get the mint information and LRU cache it for fast retrieval
     # Used for quickly getting the mint information for an atomical
@@ -915,6 +918,36 @@ class BlockProcessor:
         # store the b'i' value
         cache[atomical_id] = {"deleted": False, "value": value}
         self.atomicals_utxo_cache[location_id] = cache
+    
+    def put_or_delete_created_atomicals_utxo(self, location_id: bytes, atomical_id: bytes, pk_script: bytes, height: int, Delete: bool):
+        self.logger.debug(
+            f"put_or_delete_created_atomicals_utxo: atomical_id={location_id_bytes_to_compact(atomical_id)}, location_id={location_id_bytes_to_compact(location_id)}, pk_script={pk_script.hex()}, height={height}"
+        )
+        atomical_id_hash = sha256(atomical_id)
+        script_hash = sha256(pk_script)
+        heightb = pack_be_uint32(height)
+        if not Delete:
+            put_general_data = self.general_data_cache.__setitem__
+            put_general_data(b'ac' + atomical_id_hash + heightb + location_id, b"")
+            put_general_data(b'ac' + script_hash + heightb + location_id, b"")
+        else:
+            self.delete_general_data(b'ac' + atomical_id_hash + heightb + location_id)
+            self.delete_general_data(b'ac' + script_hash + heightb + location_id)
+    
+    def put_or_delete_spent_atomicals_utxo(self, location_id: bytes, atomical_id: bytes, pk_script: bytes, height: int, Delete: bool):
+        self.logger.debug(
+            f"put_or_delete_spent_atomicals_utxo: atomical_id={location_id_bytes_to_compact(atomical_id)}, location_id={location_id_bytes_to_compact(location_id)}, pk_script={pk_script.hex()}, height={height}"
+        )
+        atomical_id_hash = sha256(atomical_id)
+        script_hash = sha256(pk_script)
+        heightb = pack_be_uint32(height)
+        if not Delete:
+            put_general_data = self.general_data_cache.__setitem__
+            put_general_data(b'as' + atomical_id_hash + heightb + location_id, b"")
+            put_general_data(b'as' + script_hash + heightb + location_id, b"")
+        else:
+            self.delete_general_data(b'as' + atomical_id_hash + heightb + location_id)
+            self.delete_general_data(b'as' + script_hash + heightb + location_id)
 
     def get_distmints_by_atomical_id(self, atomical_id, limit, offset):
         def lookup_gi_entries(atomical_id):
@@ -1237,6 +1270,7 @@ class BlockProcessor:
             + tx_numb
         )
         self.put_atomicals_utxo(mint_info["reveal_location"], mint_info["id"], put_bytes)
+        self.put_or_delete_created_atomicals_utxo(mint_info["reveal_location"], mint_info["id"], txout.pk_script, height, False)
         atomical_id = mint_info["id"]
         self.logger.debug(
             f"validate_and_create_nft_mint_utxo: atomical_id={location_id_bytes_to_compact(atomical_id)}, tx_hash={hash_to_hex_str(tx_hash)}, mint_info={mint_info}"
@@ -1244,7 +1278,7 @@ class BlockProcessor:
         return True
 
     # Validate the parameters for a FT
-    def validate_and_create_ft_mint_utxo(self, mint_info, tx_hash):
+    def validate_and_create_ft_mint_utxo(self, mint_info, txout, height, tx_hash):
         self.logger.debug(f"validate_and_create_ft_mint_utxo: tx_hash={hash_to_hex_str(tx_hash)}")
         sat_value = pack_le_uint64(mint_info["reveal_location_value"])
         # Minted value is definitely equals to the sat value.
@@ -1260,6 +1294,7 @@ class BlockProcessor:
                 + tx_numb
             )
             self.put_atomicals_utxo(mint_info["reveal_location"], mint_info["id"], put_bytes)
+            self.put_or_delete_created_atomicals_utxo(mint_info["reveal_location"], mint_info["id"], txout.pk_script, height, False)
         subtype = mint_info["subtype"]
         atomical_id = mint_info["id"]
         self.logger.debug(
@@ -1895,6 +1930,8 @@ class BlockProcessor:
                         self.put_op_data(tx_num, tx_hash, "mint-nft-dmitem")
                     else:
                         self.put_op_data(tx_num, tx_hash, "mint-nft")
+            else:
+                self.put_or_delete_created_atomicals_utxo(mint_info["reveal_location"], mint_info["id"], txout.pk_script, height, True)
 
         elif valid_create_op_type == "FT":
             # Add $max_supply informative property
@@ -1912,7 +1949,7 @@ class BlockProcessor:
             if not self.create_or_delete_ticker_entry_if_requested(mint_info, height, Delete):
                 return None
             if not Delete:
-                if not self.validate_and_create_ft_mint_utxo(mint_info, tx_hash):
+                if not self.validate_and_create_ft_mint_utxo(mint_info, txout, height, tx_hash):
                     self.logger.info(
                         f"create_or_delete_atomical: validate_and_create_ft_mint_utxo returned FALSE in Transaction {hash_to_hex_str(tx_hash)}. Skipping..."
                     )
@@ -1929,6 +1966,8 @@ class BlockProcessor:
                             self.put_op_data(tx_num, tx_hash, "mint-dft")
                     else:
                         self.put_op_data(tx_num, tx_hash, "mint-ft")
+            else:
+                self.put_or_delete_created_atomicals_utxo(mint_info["reveal_location"], mint_info["id"], txout.pk_script, height, True)
         else:
             raise IndexError(f"Fatal index error Create Invalid")
 
@@ -2086,7 +2125,7 @@ class BlockProcessor:
                 False,
             )
 
-    def build_put_atomicals_utxo(self, atomical_id, tx_hash, tx, tx_num, out_idx, atomical_value):
+    def build_put_atomicals_utxo(self, atomical_id, tx_hash, tx, tx_num, out_idx, atomical_value, height):
         output_idx_le = pack_le_uint32(out_idx)
         location = tx_hash + output_idx_le
         txout = tx.outputs[out_idx]
@@ -2102,6 +2141,7 @@ class BlockProcessor:
             atomical_id,
             hashX + scripthash + sat_value + atomical_value + tx_numb,
         )
+        self.put_or_delete_created_atomicals_utxo(location, atomical_id, txout.pk_script, height, False)
 
     def put_nft_outputs_by_blueprint(self, nft_blueprint, operations_found_at_inputs, tx_hash, tx, tx_num, height):
         put_general_data = self.general_data_cache.__setitem__
@@ -2160,13 +2200,14 @@ class BlockProcessor:
                 tx_numb = pack_le_uint64(tx_num)[:TXNUM_LEN]
                 put_bytes: bytes = hashX + scripthash + sat_value + atomical_value + tx_numb
                 self.put_atomicals_utxo(location, atomical_id, put_bytes)
+                self.put_or_delete_created_atomicals_utxo(location, atomical_id, txout.pk_script, height, False)
 
     def put_ft_outputs_by_blueprint(self, ft_blueprint, operations_found_at_inputs, tx_hash, tx, tx_num, height):
         for output_idx, value_info in ft_blueprint.outputs.items():
             for atomical_id, atomical_transfer_info in value_info["atomicals"].items():
                 atomical_value = atomical_transfer_info.atomical_value
                 self.logger.debug(f"atomical_transfer_info={atomical_transfer_info}")
-                self.build_put_atomicals_utxo(atomical_id, tx_hash, tx, tx_num, output_idx, atomical_value)
+                self.build_put_atomicals_utxo(atomical_id, tx_hash, tx, tx_num, output_idx, atomical_value, height)
             # Only allow an event to be posted to the first FT in the list, sorted
             if ft_blueprint.first_atomical_id:
                 if operations_found_at_inputs:
@@ -3436,6 +3477,7 @@ class BlockProcessor:
                     self.delete_decentralized_mint_data(dmt_mint_atomical_id, location)
                     # just delete mint complete data if it exists, since it would never be complete after delete mint
                     self.delete_mint_complete_data(dmt_mint_atomical_id)
+                    self.put_or_delete_created_atomicals_utxo(location, dmt_mint_atomical_id, txout.pk_script, height, True)
                     return dmt_mint_atomical_id
                 else:
                     put_general_data = self.general_data_cache.__setitem__
@@ -3443,6 +3485,7 @@ class BlockProcessor:
                     tx_numb = pack_le_uint64(tx_num)[:TXNUM_LEN]
                     put_bytes: bytes = hashX + scripthash + sat_value + atomical_value + tx_numb
                     self.put_atomicals_utxo(location, dmt_mint_atomical_id, put_bytes)
+                    self.put_or_delete_created_atomicals_utxo(location, dmt_mint_atomical_id, txout.pk_script, height, False)
                     self.put_decentralized_mint_data(dmt_mint_atomical_id, location, scripthash + sat_value)
                     if will_complete_mint:
                         self.put_mint_complete_data(dmt_mint_atomical_id, height)
@@ -3596,6 +3639,9 @@ class BlockProcessor:
                             self.logger.debug(
                                 f"atomicals_transferred_list - tx_hash={hash_to_hex_str(tx_hash)}, txin_index={txin_index}, txin_hash={hash_to_hex_str(txin.prev_hash)}, txin_previdx={txin.prev_idx}, atomical_id_spent={location_id_bytes_to_compact(atomical_id)}"
                             )
+                            location_id = atomical_spent["location_id"]
+                            input_pk_script = self.get_pk_script_at_location(location_id)
+                            self.put_or_delete_spent_atomicals_utxo(location_id, atomical_id, input_pk_script, height, False)
                     # Get the undo format for the spent atomicals
                     reformatted_for_undo_entries = []
                     for atomicals_entry in atomicals_transferred_list:
@@ -4003,12 +4049,14 @@ class BlockProcessor:
             # Remove the stored output
             self.delete_general_data(b"po" + current_location)
         hashXs = []
+        txout = tx.outputs[idx]
         for spent_atomical in spent_atomicals:
             atomical_id = spent_atomical["atomical_id"]
             location_id = spent_atomical["location_id"]
             self.logger.debug(
                 f"rollback_spend_atomicals: atomical_id={atomical_id.hex()}, tx_hash={hash_to_hex_str(tx_hash)}"
             )
+            self.put_or_delete_created_atomicals_utxo(location_id, atomical_id, txout.pk_script, height, True)
             hashX = spent_atomical["data"][:HASHX_LEN]
             hashXs.append(hashX)
             # Just try to delete all states regardless of whether they are immutable or not, just easier this way
@@ -4357,6 +4405,14 @@ class BlockProcessor:
                             atomical_to_restore["location_id"],
                             atomical_to_restore["atomical_id"],
                             atomical_to_restore["data"],
+                        )
+                        input_pk_script = self.get_pk_script_at_location(atomical_to_restore["location_id"])
+                        self.put_or_delete_spent_atomicals_utxo(
+                            atomical_to_restore["location_id"],
+                            atomical_to_restore["atomical_id"],
+                            input_pk_script,
+                            self.height,
+                            True
                         )
                         self.logger.info(f"m_before={m}")
                         m -= atomicals_undo_entry_len
