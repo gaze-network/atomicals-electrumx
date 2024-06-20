@@ -308,7 +308,7 @@ class HttpUnifiedAPIHandler(object):
             "list": formatted_results
         })
     
-    async def _get_tx_detail(self, tx_hash: str) -> dict | None:
+    async def _get_tx_detail(self, tx_hash: str, f_atomical_id: bytes | None, f_address: str | None) -> dict | None:
         tx_data = await self.session_mgr.get_transaction_detail(tx_hash)
         block_height = tx_data.get("height", 0)
         tx_num = tx_data.get("tx_num", 0)
@@ -418,6 +418,20 @@ class HttpUnifiedAPIHandler(object):
         inputs.sort(key=lambda x: x['index'], reverse=False)
         outputs.sort(key=lambda x: x['index'], reverse=False)
 
+        # filter checking
+        if f_address:
+            found_input = f_address in [e["address"] for e in inputs]
+            found_output = f_address in [e["address"] for e in outputs]
+            if not(found_input or found_output):
+                return None
+        
+        if f_atomical_id:
+            f_atomical_id_str = location_id_bytes_to_compact(f_atomical_id)
+            found_input = f_atomical_id_str in [e["id"] for e in inputs]
+            fount_output = f_atomical_id_str in [e["id"] for e in outputs]
+            if not(found_input or fount_output):
+                return None
+
         return {
             "txHash": tx_hash,
             "blockHeight": block_height,
@@ -486,12 +500,19 @@ class HttpUnifiedAPIHandler(object):
             for history in history_data:
                 tx_hash, _ = self.db.fs_tx_hash(history["tx_num"])
                 tx_hashes.append(hash_to_hex_str(tx_hash))
+            
+            # use atomical_id = None to skip filtering check
+            atomical_id = None
+        
+        # get all tx filter by wallet
         else:
-            # get all tx filter by wallet
             # TODO
             tx_hashes = []
-
-        txs = await asyncio.gather(*[self._get_tx_detail(tx) for tx in tx_hashes])
+            
+            # use address = None to skip filtering check
+            address = None
+        
+        txs = await asyncio.gather(*[self._get_tx_detail(tx_hash, atomical_id, address) for tx_hash in tx_hashes])
         # filter None out
         res_txs = []
         for tx in txs:
