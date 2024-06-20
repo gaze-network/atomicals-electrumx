@@ -599,6 +599,16 @@ class HttpUnifiedAPIHandler(object):
         if not atomical_id:
             return format_response(None, 400, 'Invalid ID.')
         
+        # parse block_height
+        latest_block_height = self.db.db_height
+        q_block_height = request.query.get("blockHeight")
+        block_height = latest_block_height
+        if q_block_height is not None:
+            block_height = self._parse_block_height(q_block_height)
+            if block_height is None:
+                return format_response(None, 400, 'Invalid block height.')
+        # TODO
+        
         # get data
         atomical: dict = await self._get_atomical(atomical_id)
 
@@ -659,6 +669,10 @@ class HttpUnifiedAPIHandler(object):
             else:
                 completed_at_height = 0 # TODO
                 completed_at = self._block_height_to_unix_timestamp(completed_at_height)
+
+        # change time-sensitive data from block_height
+        # if block_height != latest_block_height:
+        #     # TODO
 
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
         return format_response({
