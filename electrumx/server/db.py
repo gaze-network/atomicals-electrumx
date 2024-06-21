@@ -265,7 +265,7 @@ class DB:
         # "maps atomical id to block height where mint is completed"
         # ---
         # Key: b'ac' + atomical_id_or_script_hash + created_height + location
-        # Value: empty
+        # Value: sat_value
         # "maps atomical id or script hash to the locations associated with the atomical id or script hash, with created height"
         # ---
         # Key: b'as' + atomical_id_or_script_hash + spent_height + location
@@ -1352,46 +1352,55 @@ class DB:
             return height
         return None
 
-    async def _get_created_atomical_locations_by_hash(self, hash: bytes, target_height: int) -> list[bytes]:
+    async def _get_created_atomical_utxos_by_hash(self, hash: bytes, target_height: int) -> list[UTXO]:
         def query():
             prefix = b"ac" + hash
-            created_atomical_locations = []
-            for created_atomical_locations_key, _ in self.utxo_db.iterator(prefix=prefix):
-                (created_height,) = unpack_be_uint32(created_atomical_locations_key[2 + TX_HASH_LEN : 2 + TX_HASH_LEN + 4])
+            created_atomical_utxos: list[UTXO] = []
+            for key, value in self.utxo_db.iterator(prefix=prefix):
+                (created_height,) = unpack_be_uint32(key[2 + TX_HASH_LEN : 2 + TX_HASH_LEN + 4])
                 # stop if we have reached the target height
                 if created_height > target_height:
                     break
-                location = created_atomical_locations_key[2 + TX_HASH_LEN + 4:]
-                created_atomical_locations.append(location)
-            return created_atomical_locations
+                location = key[2 + TX_HASH_LEN + 4:]
+                tx_hash = location[:TX_HASH_LEN]
+                output_idx = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
+                sat_value = unpack_le_uint64(value)
+                created_atomical_utxos.append(UTXO(-1, output_idx, tx_hash, created_height, sat_value))
+            return created_atomical_utxos
         # run in thread to avoid blocking the main thread
         return await run_in_thread(query)
     
-    async def _get_spent_atomical_locations_by_hash(self, hash: bytes, target_height: int) -> list[bytes]:
+    async def _get_spent_atomical_utxos_by_hash(self, hash: bytes, target_height: int) -> list[UTXO]:
         def query():
             prefix = b"as" + hash
-            spent_atomical_locations = []
-            for spent_atomical_locations_key, _ in self.utxo_db.iterator(prefix=prefix):
-                (spent_height,) = unpack_be_uint32(spent_atomical_locations_key[2 + TX_HASH_LEN : 2 + TX_HASH_LEN + 4])
+            spent_atomical_utxos = []
+            for key, _ in self.utxo_db.iterator(prefix=prefix):
+                (spent_height,) = unpack_be_uint32(key[2 + TX_HASH_LEN : 2 + TX_HASH_LEN + 4])
                 # stop if we have reached the target height
                 if spent_height > target_height:
                     break
-                location = spent_atomical_locations_key[2 + TX_HASH_LEN + 4:]
-                spent_atomical_locations.append(location)
-            return spent_atomical_locations
+                location = key[2 + TX_HASH_LEN + 4:]
+                tx_hash = location[:TX_HASH_LEN]
+                output_idx = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
+                spent_atomical_utxos.append(UTXO(-1, output_idx, tx_hash, 0, 0)) # spent height and value is not needed
+            return spent_atomical_utxos
         # run in thread to avoid blocking the main thread
         return await run_in_thread(query)
 
-    async def _get_utxos_at_height_by_hash(self, hash: bytes, target_height: int) -> list[bytes]:
-        created_locations = await self._get_created_atomical_locations_by_hash(hash, target_height)
-        spent_locations = await self._get_spent_atomical_locations_by_hash(hash, target_height)
-        return list(set(created_locations) - set(spent_locations))
+    async def _get_utxos_at_height_by_hash(self, hash: bytes, target_height: int) -> list[UTXO]:
+        created_utxos = await self._get_created_atomical_utxos_by_hash(hash, target_height)
+        spent_utxos = await self._get_spent_atomical_utxos_by_hash(hash, target_height)
+        spent_locations: dict[bytes, bool] = {}
+        for spent_utxo in spent_utxos:
+            spent_locations[spent_utxo.tx_hash + pack_le_uint32(spent_utxo.tx_pos)] = True
+        
+        return [e for e in created_utxos if e.tx_hash + pack_le_uint32(e.tx_pos) not in spent_locations]
     
-    async def get_utxos_at_height_by_atomical_id(self, atomical_id: bytes, target_height: int) -> list[bytes]:
+    async def get_utxos_at_height_by_atomical_id(self, atomical_id: bytes, target_height: int) -> list[UTXO]:
         atomical_id_hash = sha256(atomical_id)
         return await self._get_utxos_at_height_by_hash(atomical_id_hash, target_height)
     
-    async def get_utxos_at_height_by_pk_script(self, pk_script: bytes, target_height: int) -> list[bytes]:
+    async def get_utxos_at_height_by_pk_script(self, pk_script: bytes, target_height: int) -> list[UTXO]:
         pk_script_hash = sha256(pk_script)
         return await self._get_utxos_at_height_by_hash(pk_script_hash, target_height)
 
