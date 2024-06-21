@@ -33,7 +33,7 @@ class GazeNetworkReportClient:
         cumulative_event_hash_str = hash_to_hex_str(cumulative_event_hash)
         data = {
             'type': type,
-            'clientVersion': electrumx.version,
+            'clientVersion': electrumx.gaze_version,
             'dbVersion': electrumx.gaze_db_version,
             'eventHashVersion': electrumx.gaze_event_hash_version,
             'network': self.env.coin.NET,
