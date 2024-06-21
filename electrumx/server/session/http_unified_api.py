@@ -664,7 +664,6 @@ class HttpUnifiedAPIHandler(object):
             block_height = self._parse_block_height(q_block_height)
             if block_height is None:
                 return format_response(None, 400, "Invalid block height.")
-        # TODO
         
         # get data
         atomical: dict = await self._get_atomical(atomical_id)
@@ -735,11 +734,12 @@ class HttpUnifiedAPIHandler(object):
         # change time-sensitive data from block_height
         if block_height != latest_block_height:
             # support only atomical FT
-            data = self._get_arc20_holders_by_block_height(atomical_id, block_height)
+            data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
             holder_count = data["count"]
             circulating_supply = data["total"]
-            # TODO
-            # minted_amount
+            if subtype == "decentralized":
+                mint_count = await self.session_mgr.db.get_atomical_mint_count_at_height(atomical_id, block_height)
+                minted_amount = mint_count * mint_amount
 
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
         return format_response({
