@@ -848,6 +848,7 @@ class HttpUnifiedAPIHandler(object):
             utxos = await self.session_mgr.db.all_utxos(hashX)
         else:
             utxos = await self.session_mgr.db.get_utxos_at_height_by_pk_script(pk_scriptb, block_height)
+        
         formatted_results = await asyncio.gather(*[self._utxo_to_formatted(utxo) for utxo in utxos])
         
         # filter by atomical_id
