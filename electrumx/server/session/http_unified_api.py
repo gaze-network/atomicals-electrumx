@@ -820,7 +820,8 @@ class HttpUnifiedAPIHandler(object):
         address = self._parse_addr(wallet)
         if not address:
             return format_response(None, 400, "Invalid wallet.")
-
+        pk_scriptb = get_script_from_address(address)
+        
         # parse block_height
         latest_block_height = self.session_mgr.db.db_height
         q_block_height = request.query.get("blockHeight")
@@ -840,10 +841,9 @@ class HttpUnifiedAPIHandler(object):
         
         formatted_results: list[dict] = []
         utxos: list[UTXO] = []
-
+        
         # bypass for latest_block
         if block_height == latest_block_height:
-            pk_scriptb = get_script_from_address(address)
             hashX = scripthash_to_hashX(sha256(pk_scriptb))
             utxos = await self.session_mgr.db.all_utxos(hashX)
         else:
