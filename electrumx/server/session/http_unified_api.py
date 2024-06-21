@@ -802,15 +802,21 @@ class HttpUnifiedAPIHandler(object):
         # filter by atomical_id
         if atomical_id:
             atomical_id_str = location_id_bytes_to_compact(atomical_id)
-            filtered_formatted = []
-            for e in formatted_results:
-                atomical_list = e["extend"]["atomicals"]
+        
+        # return only UTXOs that contain atomical, or filter if parameter passed
+        filtered_formatted = []
+        for e in formatted_results:
+            atomical_list: list = e["extend"]["atomicals"]
+            # skip UTXO that not contain atomical
+            if len(atomical_list) == 0:
+                continue
+            found = True
+            if atomical_id:
                 found = atomical_id_str in [a["atomicalId"] for a in atomical_list]
-                if found:
-                    filtered_formatted.append(e)
-            formatted_results = filtered_formatted
+            if found:
+                filtered_formatted.append(e)
 
         return format_response({
             "blockHeight": block_height,
-            "list": formatted_results,
+            "list": filtered_formatted,
         })
