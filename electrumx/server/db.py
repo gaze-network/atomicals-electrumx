@@ -1363,8 +1363,8 @@ class DB:
                     break
                 location = key[2 + TX_HASH_LEN + 4:]
                 tx_hash = location[:TX_HASH_LEN]
-                output_idx = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
-                sat_value = unpack_le_uint64(value)
+                (output_idx,) = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
+                (sat_value,) = unpack_le_uint64(value)
                 created_atomical_utxos.append(UTXO(-1, output_idx, tx_hash, created_height, sat_value))
             return created_atomical_utxos
         # run in thread to avoid blocking the main thread
@@ -1381,7 +1381,7 @@ class DB:
                     break
                 location = key[2 + TX_HASH_LEN + 4:]
                 tx_hash = location[:TX_HASH_LEN]
-                output_idx = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
+                (output_idx,) = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
                 spent_atomical_utxos.append(UTXO(-1, output_idx, tx_hash, 0, 0)) # spent height and value is not needed
             return spent_atomical_utxos
         # run in thread to avoid blocking the main thread
