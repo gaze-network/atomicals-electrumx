@@ -921,7 +921,7 @@ class BlockProcessor:
     
     def put_or_delete_created_atomicals_utxo(self, location_id: bytes, atomical_id: bytes, pk_script: bytes, height: int, sat_value: int, Delete: bool):
         self.logger.debug(
-            f"put_or_delete_created_atomicals_utxo: atomical_id={location_id_bytes_to_compact(atomical_id)}, location_id={location_id_bytes_to_compact(location_id)}, pk_script={pk_script.hex()}, height={height}"
+            f"put_or_delete_created_atomicals_utxo: atomical_id={location_id_bytes_to_compact(atomical_id)}, location_id={location_id_bytes_to_compact(location_id)}, pk_script={pk_script.hex()}, height={height}, sat_value={sat_value}, Delete={Delete}"
         )
         atomical_id_hash = sha256(atomical_id)
         script_hash = sha256(pk_script)
@@ -937,7 +937,7 @@ class BlockProcessor:
     
     def put_or_delete_spent_atomicals_utxo(self, location_id: bytes, atomical_id: bytes, pk_script: bytes, height: int, Delete: bool):
         self.logger.debug(
-            f"put_or_delete_spent_atomicals_utxo: atomical_id={location_id_bytes_to_compact(atomical_id)}, location_id={location_id_bytes_to_compact(location_id)}, pk_script={pk_script.hex()}, height={height}"
+            f"put_or_delete_spent_atomicals_utxo: atomical_id={location_id_bytes_to_compact(atomical_id)}, location_id={location_id_bytes_to_compact(location_id)}, pk_script={pk_script.hex()}, height={height}, Delete={Delete}"
         )
         atomical_id_hash = sha256(atomical_id)
         script_hash = sha256(pk_script)
