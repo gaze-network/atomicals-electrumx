@@ -264,6 +264,10 @@ class DB:
         # Value: block height
         # "maps atomical id to block height where mint is completed"
         # ---
+        # Key: b'mevt' + atomical_id + block_height + location_id
+        # Value: empty
+        # "maps mint event of atomical id to block height and location"
+        # ---
         # Key: b'ac' + atomical_id_or_script_hash + created_height + location
         # Value: sat_value
         # "maps atomical id or script hash to the locations associated with the atomical id or script hash, with created height"
@@ -1351,6 +1355,18 @@ class DB:
             (height,) = unpack_le_uint32(mint_completed_value)
             return height
         return None
+
+    async def get_atomical_mint_count_at_height(self, atomical_id: bytes, target_height: int) -> int:
+        def query():
+            prefix = b"mevt" + atomical_id
+            count = 0
+            for key, _ in self.utxo_db.iterator(prefix=prefix):
+                (height,) = unpack_be_uint32(key[4 + ATOMICAL_ID_LEN : 4 + ATOMICAL_ID_LEN + 4])
+                if height > target_height:
+                    break
+                count += 1
+            return count
+        return await run_in_thread(query)
 
     async def _get_created_atomical_utxos_by_hash(self, hash: bytes, target_height: int) -> list[UTXO]:
         def query():

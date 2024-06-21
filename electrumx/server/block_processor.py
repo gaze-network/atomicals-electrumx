@@ -3479,6 +3479,7 @@ class BlockProcessor:
                     # just delete mint complete data if it exists, since it would never be complete after delete mint
                     self.delete_mint_complete_data(dmt_mint_atomical_id)
                     self.put_or_delete_created_atomicals_utxo(location, dmt_mint_atomical_id, txout.pk_script, height, 0, True)
+                    self.put_or_delete_mint_event(location, dmt_mint_atomical_id, height, True)
                     return dmt_mint_atomical_id
                 else:
                     put_general_data = self.general_data_cache.__setitem__
@@ -3488,6 +3489,7 @@ class BlockProcessor:
                     self.put_atomicals_utxo(location, dmt_mint_atomical_id, put_bytes)
                     self.put_or_delete_created_atomicals_utxo(location, dmt_mint_atomical_id, txout.pk_script, height, txout.value, False)
                     self.put_decentralized_mint_data(dmt_mint_atomical_id, location, scripthash + sat_value)
+                    self.put_or_delete_mint_event(location, dmt_mint_atomical_id, height, False)
                     if will_complete_mint:
                         self.put_mint_complete_data(dmt_mint_atomical_id, height)
                     self.logger.debug(
@@ -3507,6 +3509,16 @@ class BlockProcessor:
             )
             self.put_op_data(tx_num, tx_hash, "mint-dft-failed")
             return None
+    
+    def put_or_delete_mint_event(self, location_id: bytes, atomical_id: bytes, height: int, Delete: bool):
+        self.logger.debug(f"put_or_delete_mint_event: location_id={location_id}, atomical_id={atomical_id}, height={height}, Delete={Delete}")
+        heightb = pack_be_uint32(height)
+
+        if not Delete:
+            put_general_data = self.general_data_cache.__setitem__
+            put_general_data(b"mevt" + atomical_id + heightb + location_id, b"")
+        else:
+            self.delete_general_data(b"mevt" + atomical_id + heightb + location_id)
 
     def is_atomicals_activated(self, height):
         if height >= self.coin.ATOMICALS_ACTIVATION_HEIGHT:
