@@ -8,8 +8,9 @@
 """Class for handling environment configuration and defaults."""
 
 
-from dataclasses import dataclass
 import re
+import sys
+from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv6Address
 from typing import Type, Union
 
@@ -17,10 +18,11 @@ from aiorpcx import Service, ServicePart
 
 from electrumx.lib.coins import AtomicalsCoinMixin, Coin
 from electrumx.lib.env_base import EnvBase
-import sys
+
 
 def is_test_environment():
     return "pytest" in sys.modules
+
 
 class ServiceError(Exception):
     pass
@@ -130,7 +132,7 @@ class Env(EnvBase):
         self.report_services = self.services_to_report()
 
         # debug
-        self.debug_skip_await_mempool_sync_on_startup = self.boolean('DEBUG_SKIP_AWAIT_MEMPOOL_SYNC_ON_STARTUP', False)
+        self.debug_skip_await_mempool_sync_on_startup = self.boolean("DEBUG_SKIP_AWAIT_MEMPOOL_SYNC_ON_STARTUP", False)
 
     def sane_max_sessions(self):
         """Return the maximum number of sessions to permit.  Normally this
@@ -224,13 +226,13 @@ class Env(EnvBase):
 
     def set_gaze_network_report_config(self):
         gaze_network_report_enabled = None
-        gazenw_report_enable_raw: str | None = self.default('GAZE_NETWORK_REPORTING_ENABLED', None)
+        gazenw_report_enable_raw: str | None = self.default("GAZE_NETWORK_REPORTING_ENABLED", None)
 
         if gazenw_report_enable_raw is not None:
             gazenw_report_enable_raw = gazenw_report_enable_raw.strip().lower()
             raw_is_true = gazenw_report_enable_raw in ["1", "y", "yes", "t", "true"]
             raw_is_false = gazenw_report_enable_raw in ["0", "n", "no", "f", "false"]
-            
+
             if raw_is_true and not raw_is_false:
                 gaze_network_report_enabled = True
             if raw_is_false and not raw_is_true:
@@ -243,13 +245,17 @@ class Env(EnvBase):
         if not gaze_network_report_enabled:
             return None
 
-        gaze_network_report_url = self.default('GAZE_NETWORK_REPORTING_URL', 'https://indexer.api.gaze.network')
-        gaze_network_report_name = self.required('GAZE_NETWORK_REPORTING_NAME')
-        gaze_network_report_website_url = self.default('GAZE_NETWORK_REPORTING_WEBSITE_URL', None)
-        gaze_network_report_indexer_api_url = self.default('GAZE_NETWORK_REPORTING_INDEXER_API_URL', None)
+        gaze_network_report_url = self.default("GAZE_NETWORK_REPORTING_URL", "https://indexer.api.gaze.network")
+        gaze_network_report_name = self.required("GAZE_NETWORK_REPORTING_NAME")
+        gaze_network_report_website_url = self.default("GAZE_NETWORK_REPORTING_WEBSITE_URL", None)
+        gaze_network_report_indexer_api_url = self.default("GAZE_NETWORK_REPORTING_INDEXER_API_URL", None)
 
-        return GazeNetworkReportConfig(gaze_network_report_url, gaze_network_report_name, gaze_network_report_website_url, gaze_network_report_indexer_api_url)
-
+        return GazeNetworkReportConfig(
+            gaze_network_report_url,
+            gaze_network_report_name,
+            gaze_network_report_website_url,
+            gaze_network_report_indexer_api_url,
+        )
 
     def peer_discovery_enum(self):
         pd = self.default("PEER_DISCOVERY", "on").strip().lower()
@@ -260,9 +266,10 @@ class Env(EnvBase):
         else:
             return self.PD_ON
 
+
 @dataclass
 class GazeNetworkReportConfig:
     url: str
     name: str
-    website_url: 'str | None'
-    indexer_api_url: 'str | None'
+    website_url: "str | None"
+    indexer_api_url: "str | None"

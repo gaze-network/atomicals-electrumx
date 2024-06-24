@@ -1,20 +1,37 @@
 import asyncio
 import base64
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
+
 from aiohttp.web import json_response
 from aiohttp.web_urldispatcher import UrlDispatcher
 
 from electrumx.lib import util
-from electrumx.lib.hash import HASHX_LEN, double_sha256, hash_to_hex_str, hex_str_to_hash, sha256
-from electrumx.lib.script2addr import get_address_from_output_script, get_script_from_address
-from electrumx.lib.util_atomicals import DFT_MINT_MAX_MAX_COUNT_DENSITY, compact_to_location_id_bytes, location_id_bytes_to_compact, parse_protocols_operations_from_witness_array
+from electrumx.lib.hash import (
+    HASHX_LEN,
+    double_sha256,
+    hash_to_hex_str,
+    hex_str_to_hash,
+    sha256,
+)
+from electrumx.lib.script2addr import (
+    get_address_from_output_script,
+    get_script_from_address,
+)
+from electrumx.lib.util_atomicals import (
+    DFT_MINT_MAX_MAX_COUNT_DENSITY,
+    compact_to_location_id_bytes,
+    location_id_bytes_to_compact,
+    parse_protocols_operations_from_witness_array,
+)
 from electrumx.server.db import UTXO
 
 if TYPE_CHECKING:
-    from electrumx.server.controller import SessionManager
     from aiohttp.web import Request, Response
+
+    from electrumx.server.controller import SessionManager
+
 
 class JSONBytesEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -23,39 +40,46 @@ class JSONBytesEncoder(json.JSONEncoder):
             return base64.b64encode(obj).decode()
         return super().default(obj)
 
+
 def format_response(result: "dict | None", status: "int | None" = None, error: "str | None" = None) -> "Response":
     if error:
         if status == None:
             status = 500
-        return json_response({
+        return json_response(
+            {
                 "error": error,
             },
             status=status,
-            dumps=lambda o: json.dumps(o, cls=JSONBytesEncoder)
+            dumps=lambda o: json.dumps(o, cls=JSONBytesEncoder),
         )
     if status == None:
         status = 200
-    return json_response({
-                "error": None,
-                "result": result,
-            },
-            status=status,
-            dumps=lambda o: json.dumps(o, cls=JSONBytesEncoder)
-        )
+    return json_response(
+        {
+            "error": None,
+            "result": result,
+        },
+        status=status,
+        dumps=lambda o: json.dumps(o, cls=JSONBytesEncoder),
+    )
+
 
 def scripthash_to_hashX(script_hash: bytes) -> "Optional[bytes]":
     if len(script_hash) == 32:
         return script_hash[:HASHX_LEN]
     return None
 
+
 def get_decimals():
-    return 0 # no decimal point for arc20
+    return 0  # no decimal point for arc20
+
 
 @dataclass
 class BalanceQuery:
     address: str
     atomical_id: "bytes | None"
     block_height: "int | None"
+
 
 class HttpUnifiedAPIHandler(object):
     def __init__(
@@ -72,6 +96,7 @@ class HttpUnifiedAPIHandler(object):
             except Exception as e:
                 self.logger.exception(f"Request has failed with exception: {repr(e)}")
                 return format_response(None, 500, "Internal Server Error")
+
         return wrapper
 
     def mount_routes(self, router: UrlDispatcher):
@@ -86,7 +111,7 @@ class HttpUnifiedAPIHandler(object):
     def _resolve_ticker_to_atomical_id(self, ticker: str) -> bytes | None:
         bp = self.session_mgr.bp
         height = bp.height
-        ticker = ticker.lower() # tickers are case-insensitive
+        ticker = ticker.lower()  # tickers are case-insensitive
         status, candidate_atomical_id, _ = bp.get_effective_ticker(ticker, height)
         if status == "verified":
             return candidate_atomical_id
@@ -122,7 +147,7 @@ class HttpUnifiedAPIHandler(object):
         else:
             addr = wallet
         return addr
-    
+
     # check if block height is valid
     def _parse_block_height(self, block_height_str: str) -> int | None:
         # empty string
@@ -133,7 +158,7 @@ class HttpUnifiedAPIHandler(object):
             return None
         block_height = int(block_height_str)
         return block_height
-    
+
     def _block_height_to_unix_timestamp(self, block_height: int) -> int:
         db_block_ts = self.session_mgr.db.get_block_timestamp(block_height)
         if db_block_ts:
@@ -144,10 +169,12 @@ class HttpUnifiedAPIHandler(object):
     async def get_block_height(self, request: "Request") -> "Response":
         block_height = self.session_mgr.db.db_height
         block_hash = self.session_mgr.db.get_atomicals_block_hash(block_height)
-        return format_response({
-            "hash": block_hash,
-            "height": block_height,
-        })
+        return format_response(
+            {
+                "hash": block_hash,
+                "height": block_height,
+            }
+        )
 
     def _process_balance(self, address: str, balances: "dict[bytes, int]", tx_data):
         inputs: dict = tx_data["transfers"]["inputs"]
@@ -182,26 +209,29 @@ class HttpUnifiedAPIHandler(object):
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
         atomical = await self.session_mgr.atomical_id_get(compact_atomical_id)
         return atomical
-    
+
     async def _confirmed_history(self, hashX):
         # Note history is ordered
         history, _ = await self.session_mgr.limited_history(hashX)
-        conf = [{"tx_hash": hash_to_hex_str(tx_hash), "height": height}
-                for tx_hash, height in history]
+        conf = [{"tx_hash": hash_to_hex_str(tx_hash), "height": height} for tx_hash, height in history]
         return conf
 
     async def _get_populated_arc20_balances(self, address: str, atomical_id: "bytes | None", block_height: int):
         pk_scriptb = get_script_from_address(address)
 
-        balances: "dict[bytes, int]" = {} # atomical_id -> amount (int)
+        balances: "dict[bytes, int]" = {}  # atomical_id -> amount (int)
         script_hash = sha256(pk_scriptb)
         hashX = scripthash_to_hashX(script_hash)
         if not hashX:
-            raise Exception("Invalid hashX") # should not happen since we are using sha256
+            raise Exception("Invalid hashX")  # should not happen since we are using sha256
         history_data = await self._confirmed_history(hashX)
         # only use transactions after ATOMICALS_ACTIVATION_HEIGHT and before block_height
-        history_data = [x for x in history_data if self.session_mgr.env.coin.ATOMICALS_ACTIVATION_HEIGHT <= x["height"] and x["height"] <= block_height]
-        
+        history_data = [
+            x
+            for x in history_data
+            if self.session_mgr.env.coin.ATOMICALS_ACTIVATION_HEIGHT <= x["height"] and x["height"] <= block_height
+        ]
+
         history_list = []
         for history in list(history_data):
             tx_num, _ = self.session_mgr.db.get_tx_num_height_from_tx_hash(hex_str_to_hash(history["tx_hash"]))
@@ -209,18 +239,25 @@ class HttpUnifiedAPIHandler(object):
             history_list.append(history)
 
         history_list.sort(key=lambda x: x["tx_num"])
-        tx_datas = await asyncio.gather(*[self.session_mgr.get_transaction_detail(history["tx_hash"], history["height"], history["tx_num"]) for history in history_list])
+        tx_datas = await asyncio.gather(
+            *[
+                self.session_mgr.get_transaction_detail(history["tx_hash"], history["height"], history["tx_num"])
+                for history in history_list
+            ]
+        )
         for tx_data in tx_datas:
             self._process_balance(address, balances, tx_data)
-        
+
         # clear empty balances and filter by atomical_id
-        balances = { k: v for k, v in balances.items() if v != 0 and (not atomical_id or k == atomical_id )}
+        balances = {k: v for k, v in balances.items() if v != 0 and (not atomical_id or k == atomical_id)}
         # populate atomical objects
         atomical_ids = list(balances.keys())
         atomicals_list = await asyncio.gather(*[self._get_atomical(atomical_id) for atomical_id in atomical_ids])
-        atomicals: dict[bytes, dict] = {atomical_id: atomical for atomical_id, atomical in zip(atomical_ids, atomicals_list)}
+        atomicals: dict[bytes, dict] = {
+            atomical_id: atomical for atomical_id, atomical in zip(atomical_ids, atomicals_list)
+        }
 
-        populated_balances: "list[dict]" = [] # atomical_id -> { "amount": int, "ticker": str | None }
+        populated_balances: "list[dict]" = []  # atomical_id -> { "amount": int, "ticker": str | None }
         for atomical_id, amount in balances.items():
             atomical = atomicals.get(atomical_id)
             if atomical:
@@ -235,7 +272,7 @@ class HttpUnifiedAPIHandler(object):
                 }
                 populated_balances.append(balance)
         return populated_balances
-    
+
     @error_handler
     async def get_arc20_balance(self, request: "Request") -> "Response":
         # parse wallet
@@ -254,7 +291,7 @@ class HttpUnifiedAPIHandler(object):
             block_height = self._parse_block_height(q_block_height)
             if block_height is None:
                 return format_response(None, 400, "Invalid block height.")
-        
+
         # parse atomical_id
         id = request.query.get("id")
         atomical_id = None
@@ -262,13 +299,10 @@ class HttpUnifiedAPIHandler(object):
             atomical_id = self._parse_request_id(id)
             if not atomical_id:
                 return format_response(None, 400, "Invalid ID.")
-        
+
         populated_balances = await self._get_populated_arc20_balances(address, atomical_id, block_height)
-        return format_response({
-            "blockHeight": block_height,
-            "list": populated_balances
-        })
-    
+        return format_response({"blockHeight": block_height, "list": populated_balances})
+
     @error_handler
     async def get_arc20_balances_batch(self, request: "Request") -> "Response":
         body: dict = await request.json()
@@ -284,7 +318,7 @@ class HttpUnifiedAPIHandler(object):
             address = self._parse_addr(wallet)
             if not address:
                 return format_response(None, 400, f"query index {idx}: invalid wallet.")
-            
+
             # parse block_height
             # this is from json, so q_block_height may be number itself
             q_block_height = raw_query.get("blockHeight")
@@ -293,7 +327,7 @@ class HttpUnifiedAPIHandler(object):
                 block_height = self._parse_block_height(str(q_block_height))
                 if block_height is None:
                     return format_response(None, 400, f"query index {idx}: invalid block height.")
-            
+
             # parse atomical_id
             id = raw_query.get("id")
             atomical_id = None
@@ -301,19 +335,21 @@ class HttpUnifiedAPIHandler(object):
                 atomical_id = self._parse_request_id(id)
                 if not atomical_id:
                     return format_response(None, 400, f"query index {idx}: invalid ID.")
-            
+
             # append to list
             queries.append(BalanceQuery(address, atomical_id, block_height))
-        
-        results = await asyncio.gather(*[self._get_populated_arc20_balances(query.address, query.atomical_id, query.block_height) for query in queries])
-        formatted_results = [{
-            "blockHeight": query.block_height,
-            "list": result
-        } for query, result in zip(queries, results)]
-        return format_response({
-            "list": formatted_results
-        })
-    
+
+        results = await asyncio.gather(
+            *[
+                self._get_populated_arc20_balances(query.address, query.atomical_id, query.block_height)
+                for query in queries
+            ]
+        )
+        formatted_results = [
+            {"blockHeight": query.block_height, "list": result} for query, result in zip(queries, results)
+        ]
+        return format_response({"list": formatted_results})
+
     async def _get_tx_detail(self, tx_hash: str, f_atomical_id: bytes | None, f_address: str | None) -> dict | None:
         tx_data = await self.session_mgr.get_transaction_detail(tx_hash)
         block_height = tx_data.get("height", 0)
@@ -321,7 +357,7 @@ class HttpUnifiedAPIHandler(object):
         tx_info: dict = tx_data.get("info", {})
         tx_transfers: dict = tx_data.get("transfers", {})
         tx_op = tx_data.get("op", "")
-        
+
         tx_payload: dict = tx_info.get("payload", {})
         tx_payload_args: dict = tx_payload.get("args", {})
 
@@ -344,7 +380,7 @@ class HttpUnifiedAPIHandler(object):
             commit_index = operation_found_at_inputs.get("commit_index")
 
         inputs = []
-        # if multiple FTs in same utxo, 
+        # if multiple FTs in same utxo,
         # will have multiple inputs with same index
         for tx_i in tx_inputs.values():
             for tx_input in tx_i:
@@ -384,7 +420,7 @@ class HttpUnifiedAPIHandler(object):
         mint_ticker = tx_payload_args.get("mint_ticker", "")
         if mint_ticker:
             tx_info_outputs: dict = tx_info.get("outputs", {})
-            mint_outputs: list[dict] = tx_info_outputs.get(0, []) # mint output should be in index 0
+            mint_outputs: list[dict] = tx_info_outputs.get(0, [])  # mint output should be in index 0
             for output_data in mint_outputs:
                 atomica_id_str = output_data.get("atomical_id", "")
                 address = output_data.get("address", "")
@@ -408,7 +444,7 @@ class HttpUnifiedAPIHandler(object):
                         "decimals": get_decimals(),
                     }
                 new_mint = {
-                    "amount": str(int(prev_mint["amount"])+mint_amount),
+                    "amount": str(int(prev_mint["amount"]) + mint_amount),
                     "decimals": get_decimals(),
                 }
                 mints[atomica_id_str] = new_mint
@@ -419,7 +455,7 @@ class HttpUnifiedAPIHandler(object):
                 "amount": str(v),
                 "decimals": get_decimals(),
             }
-        
+
         # sort inputs and outputs asc
         inputs.sort(key=lambda x: x["index"], reverse=False)
         outputs.sort(key=lambda x: x["index"], reverse=False)
@@ -428,15 +464,15 @@ class HttpUnifiedAPIHandler(object):
         if f_address:
             found_input = f_address in [e["address"] for e in inputs]
             found_output = f_address in [e["address"] for e in outputs]
-            if not(found_input or found_output):
+            if not (found_input or found_output):
                 return None
-        
+
         if f_atomical_id:
             f_atomical_id_str = location_id_bytes_to_compact(f_atomical_id)
             found_input = f_atomical_id_str in [e["id"] for e in inputs]
             fount_output = f_atomical_id_str in [e["id"] for e in outputs]
             # TODO: more place to check?
-            if not(found_input or fount_output):
+            if not (found_input or fount_output):
                 return None
 
         return {
@@ -449,7 +485,7 @@ class HttpUnifiedAPIHandler(object):
             "mints": mints,
             "burns": burns,
             # arc20-specific data
-            "extend": { 
+            "extend": {
                 "op": tx_op,
                 "info": {
                     "payload": tx_payload,
@@ -458,7 +494,7 @@ class HttpUnifiedAPIHandler(object):
                 "commitIndex": commit_index,
             },
         }
-    
+
     @error_handler
     async def get_arc20_transactions(self, request: "Request") -> "Response":
         # parse wallet (optional)
@@ -476,7 +512,7 @@ class HttpUnifiedAPIHandler(object):
             block_height = self._parse_block_height(q_block_height)
             if block_height is None:
                 return format_response(None, 400, "Invalid block height.")
-        
+
         # parse atomical_id
         id = request.query.get("id")
         atomical_id = None
@@ -484,7 +520,7 @@ class HttpUnifiedAPIHandler(object):
             atomical_id = self._parse_request_id(id)
             if not atomical_id:
                 return format_response(None, 400, "Invalid ID.")
-            
+
         # no parameters passed, default to filter by latest_block_height
         if not (address or atomical_id or block_height):
             latest_block_height = self.session_mgr.db.db_height
@@ -497,7 +533,7 @@ class HttpUnifiedAPIHandler(object):
         if block_height:
             # get all tx in single block_height
             tx_hashes = self.session_mgr.db.get_atomicals_block_txs(block_height)
-        
+
         # no block_height found, use more exhausive search
         elif atomical_id:
             # get all tx filter by id
@@ -507,18 +543,18 @@ class HttpUnifiedAPIHandler(object):
             for history in history_data:
                 tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
                 tx_hashes.append(hash_to_hex_str(tx_hash))
-            
+
             # use atomical_id = None to skip filtering check
             atomical_id = None
-        
+
         # get all tx filter by wallet
         else:
             # TODO
             tx_hashes = []
-            
+
             # use address = None to skip filtering check
             address = None
-        
+
         txs = await asyncio.gather(*[self._get_tx_detail(tx_hash, atomical_id, address) for tx_hash in tx_hashes])
         # filter None out
         res_txs = []
@@ -526,16 +562,18 @@ class HttpUnifiedAPIHandler(object):
             if tx:
                 res_txs.append(tx)
 
-        return format_response({
-            "list": res_txs,
-        })
-    
+        return format_response(
+            {
+                "list": res_txs,
+            }
+        )
+
     async def _get_arc20_holders_by_block_height(self, atomical_id: bytes, block_height: int) -> dict:
         utxos = await self.session_mgr.db.get_utxos_at_height_by_atomical_id(atomical_id, block_height)
-        
+
         total_value = 0
         holder_map: dict[bytes, int] = {}
-        
+
         # group by pk_script and map to address
         for utxo in utxos:
             tx_id_str = hash_to_hex_str(utxo.tx_hash)
@@ -550,7 +588,7 @@ class HttpUnifiedAPIHandler(object):
             "count": len(holder_map),
             "holders": holder_map,
         }
-    
+
     @error_handler
     async def get_arc20_holders(self, request: "Request") -> "Response":
         # parse atomical_id
@@ -560,7 +598,7 @@ class HttpUnifiedAPIHandler(object):
         atomical_id = self._parse_request_id(id)
         if not atomical_id:
             return format_response(None, 400, "Invalid ID.")
-            
+
         # parse block_height
         latest_block_height = self.session_mgr.db.db_height
         q_block_height = request.query.get("blockHeight")
@@ -583,7 +621,7 @@ class HttpUnifiedAPIHandler(object):
         max_supply = 0
         mint_amount = 0
         minted_amount = 0
-        
+
         # find max_supply and minted_amount
         if atomical_type == "FT":
             if mint_mode == "fixed":
@@ -600,52 +638,60 @@ class HttpUnifiedAPIHandler(object):
         if subtype == "decentralized":
             atomical: dict = await self.session_mgr.bp.get_dft_mint_info_rpc_format_by_atomical_id(atomical_id)
             mint_count = atomical["dft_info"]["mint_count"]
-            minted_amount = mint_count * mint_amount # total minted
+            minted_amount = mint_count * mint_amount  # total minted
         elif subtype == "direct":
             atomical: dict = await self.session_mgr.bp.get_ft_mint_info_rpc_format_by_atomical_id(atomical_id)
-            minted_amount = max_supply # entire mint in direct mint
-        
+            minted_amount = max_supply  # entire mint in direct mint
+
         if block_height == latest_block_height:
             atomical: dict = await self.session_mgr.db.populate_extended_atomical_holder_info(atomical_id, atomical)
             if atomical["type"] == "FT":
                 for holder in atomical.get("holders", []):
                     percent = holder["holding"] / max_supply
-                    formatted_results.append({
-                        "address": get_address_from_output_script(bytes.fromhex(holder["script"])),
-                        "pkScript": holder["script"],
-                        "amount": str(holder["holding"]),
-                        "percent": percent,
-                    })
+                    formatted_results.append(
+                        {
+                            "address": get_address_from_output_script(bytes.fromhex(holder["script"])),
+                            "pkScript": holder["script"],
+                            "amount": str(holder["holding"]),
+                            "percent": percent,
+                        }
+                    )
             elif atomical["type"] == "NFT":
                 for holder in atomical.get("holders", []):
-                    formatted_results.append({
-                        "address": get_address_from_output_script(bytes.fromhex(holder["script"])),
-                        "pkScript": holder["script"],
-                        "amount": str(holder["holding"]),
-                        "percent": 1,
-                    })
+                    formatted_results.append(
+                        {
+                            "address": get_address_from_output_script(bytes.fromhex(holder["script"])),
+                            "pkScript": holder["script"],
+                            "amount": str(holder["holding"]),
+                            "percent": 1,
+                        }
+                    )
         else:
             # support only atomical FT
             data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
             for pk_scriptb, amount in data.get("holders", {}).items():
-                formatted_results.append({
-                    "address": get_address_from_output_script(pk_scriptb),
-                    "pkScript": pk_scriptb.hex(),
-                    "amount": str(amount),
-                    "percent": amount / max_supply,
-                })
+                formatted_results.append(
+                    {
+                        "address": get_address_from_output_script(pk_scriptb),
+                        "pkScript": pk_scriptb.hex(),
+                        "amount": str(amount),
+                        "percent": amount / max_supply,
+                    }
+                )
 
         # sort by holding desc
         formatted_results.sort(key=lambda x: (int(x["amount"]), x["address"]), reverse=True)
 
-        return format_response({
-            "blockHeight": block_height,
-            "totalSupply": str(max_supply),
-            "mintedAmount": str(minted_amount),
-            "decimals": get_decimals(),
-            "list": formatted_results
-        })
-    
+        return format_response(
+            {
+                "blockHeight": block_height,
+                "totalSupply": str(max_supply),
+                "mintedAmount": str(minted_amount),
+                "decimals": get_decimals(),
+                "list": formatted_results,
+            }
+        )
+
     @error_handler
     async def get_arc20_token(self, request: "Request") -> "Response":
         # parse atomical_id
@@ -655,7 +701,7 @@ class HttpUnifiedAPIHandler(object):
         atomical_id = self._parse_request_id(id)
         if not atomical_id:
             return format_response(None, 400, "Invalid ID.")
-        
+
         # parse block_height
         latest_block_height = self.session_mgr.db.db_height
         q_block_height = request.query.get("blockHeight")
@@ -664,7 +710,7 @@ class HttpUnifiedAPIHandler(object):
             block_height = self._parse_block_height(q_block_height)
             if block_height is None:
                 return format_response(None, 400, "Invalid block height.")
-        
+
         # get data
         atomical: dict = await self._get_atomical(atomical_id)
 
@@ -678,7 +724,7 @@ class HttpUnifiedAPIHandler(object):
         mint_count = 0
         minted_amount = 0
         max_supply = 0
-        mint_amount = 0 # mint size
+        mint_amount = 0  # mint size
 
         if atomical_type == "FT":
             if mint_mode == "fixed":
@@ -695,10 +741,10 @@ class HttpUnifiedAPIHandler(object):
         if subtype == "decentralized":
             atomical: dict = await self.session_mgr.bp.get_dft_mint_info_rpc_format_by_atomical_id(atomical_id)
             mint_count = atomical["dft_info"]["mint_count"]
-            minted_amount = mint_count * mint_amount # total minted
+            minted_amount = mint_count * mint_amount  # total minted
         elif subtype == "direct":
             atomical: dict = await self.session_mgr.bp.get_ft_mint_info_rpc_format_by_atomical_id(atomical_id)
-            minted_amount = max_supply # entire mint in direct mint
+            minted_amount = max_supply  # entire mint in direct mint
 
         location_summary: dict = atomical.get("location_summary", {})
         holder_count = location_summary.get("unique_holders", 0)
@@ -717,7 +763,7 @@ class HttpUnifiedAPIHandler(object):
 
         # mint completion data
         completed_at_height = None
-        completed_at = None # unix timestamp
+        completed_at = None  # unix timestamp
         if minted_amount == max_supply:
             if subtype == "direct":
                 completed_at_height = deployed_at_height
@@ -742,44 +788,46 @@ class HttpUnifiedAPIHandler(object):
                 minted_amount = mint_count * mint_amount
 
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
-        return format_response({
-            "id": compact_atomical_id,
-            "name": ticker,
-            "symbol": ticker,
-            "totalSupply": str(max_supply),
-            "circulatingSupply": str(circulating_supply),
-            "mintedAmount": str(minted_amount),
-            "burnedAmount": str(minted_amount - circulating_supply),
-            "decimals": get_decimals(),
-            "deployedAt": deployed_at,
-            "deployedAtHeight": deployed_at_height,
-            "deployTxHash": deploy_tx_hash,
-            "completedAt": completed_at,
-            "completedAtHeight": completed_at_height,
-            "holdersCount": holder_count,
-
-            # arc20-specific data
-            "extend": {
-                "atomicalId": compact_atomical_id,
-                "atomicalNumber": atomical.get("atomical_number", 0),
-                "atomicalRef": atomical.get("atomical_ref", ""),
-                "amountPerMint": str(mint_amount),
-                "maxMints": str(atomical.get("$max_mints", 0)), # number of times this token can be minted
-                "deployedBy": deployer_address,
-                "mintHeight": atomical.get("$mint_height", 0), # the block height this FT can start to be minted
-                "mintInfo": {
-                    "commitTxHash": commit_tx_id,
-                    "commitIndex": mint_info.get("commit_index"), # commit tx output index of utxo used in reveal tx
-                    "revealTxHash": mint_info.get("reveal_location_txid"),
-                    "revealIndex": mint_info.get("reveal_location_index"),
-                    "args": mint_info_args, # raw atomicals operation payload
-                    "metadata": mint_info.get("meta", {}) # metadata.json used during deployment
+        return format_response(
+            {
+                "id": compact_atomical_id,
+                "name": ticker,
+                "symbol": ticker,
+                "totalSupply": str(max_supply),
+                "circulatingSupply": str(circulating_supply),
+                "mintedAmount": str(minted_amount),
+                "burnedAmount": str(minted_amount - circulating_supply),
+                "decimals": get_decimals(),
+                "deployedAt": deployed_at,
+                "deployedAtHeight": deployed_at_height,
+                "deployTxHash": deploy_tx_hash,
+                "completedAt": completed_at,
+                "completedAtHeight": completed_at_height,
+                "holdersCount": holder_count,
+                # arc20-specific data
+                "extend": {
+                    "atomicalId": compact_atomical_id,
+                    "atomicalNumber": atomical.get("atomical_number", 0),
+                    "atomicalRef": atomical.get("atomical_ref", ""),
+                    "amountPerMint": str(mint_amount),
+                    "maxMints": str(atomical.get("$max_mints", 0)),  # number of times this token can be minted
+                    "deployedBy": deployer_address,
+                    "mintHeight": atomical.get("$mint_height", 0),  # the block height this FT can start to be minted
+                    "mintInfo": {
+                        "commitTxHash": commit_tx_id,
+                        # commit tx output index of utxo used in reveal tx
+                        "commitIndex": mint_info.get("commit_index"),
+                        "revealTxHash": mint_info.get("reveal_location_txid"),
+                        "revealIndex": mint_info.get("reveal_location_index"),
+                        "args": mint_info_args,  # raw atomicals operation payload
+                        "metadata": mint_info.get("meta", {}),  # metadata.json used during deployment
+                    },
+                    "subtype": subtype,
+                    "mintMode": mint_mode,
                 },
-                "subtype": subtype,
-                "mintMode": mint_mode
             }
-        })
-    
+        )
+
     async def _utxo_to_formatted(self, utxo: UTXO) -> "dict":
         tx_id_str = hash_to_hex_str(utxo.tx_hash)
         output_index = utxo.tx_pos
@@ -788,7 +836,7 @@ class HttpUnifiedAPIHandler(object):
         location_info: dict = atomical_by_location.get("location_info", {})
         atomical_amount = location_info.get("value", 0)
         atomical_ids: list = atomical_by_location.get("atomicals", [])
-        
+
         formatted_atomicals = []
         # should be 0 or 1 item
         for atomical_id in atomical_ids:
@@ -805,12 +853,10 @@ class HttpUnifiedAPIHandler(object):
             "txHash": tx_id_str,
             "outputIndex": utxo.tx_pos,
             "sats": utxo.value,
-            "extend": {
-                "atomicals": formatted_atomicals
-            }
+            "extend": {"atomicals": formatted_atomicals},
         }
         return res
-    
+
     @error_handler
     async def get_arc20_utxos(self, request: "Request") -> "Response":
         # parse wallet
@@ -821,7 +867,7 @@ class HttpUnifiedAPIHandler(object):
         if not address:
             return format_response(None, 400, "Invalid wallet.")
         pk_scriptb = get_script_from_address(address)
-        
+
         # parse block_height
         latest_block_height = self.session_mgr.db.db_height
         q_block_height = request.query.get("blockHeight")
@@ -830,7 +876,7 @@ class HttpUnifiedAPIHandler(object):
             block_height = self._parse_block_height(q_block_height)
             if block_height is None:
                 return format_response(None, 400, "Invalid block height.")
-        
+
         # parse atomical_id
         id = request.query.get("id")
         atomical_id = None
@@ -838,23 +884,23 @@ class HttpUnifiedAPIHandler(object):
             atomical_id = self._parse_request_id(id)
             if not atomical_id:
                 return format_response(None, 400, "Invalid ID.")
-        
+
         formatted_results: list[dict] = []
         utxos: list[UTXO] = []
-        
+
         # bypass for latest_block
         if block_height == latest_block_height:
             hashX = scripthash_to_hashX(sha256(pk_scriptb))
             utxos = await self.session_mgr.db.all_utxos(hashX)
         else:
             utxos = await self.session_mgr.db.get_utxos_at_height_by_pk_script(pk_scriptb, block_height)
-        
+
         formatted_results = await asyncio.gather(*[self._utxo_to_formatted(utxo) for utxo in utxos])
-        
+
         # filter by atomical_id
         if atomical_id:
             atomical_id_str = location_id_bytes_to_compact(atomical_id)
-        
+
         # return only UTXOs that contain atomical, or filter if parameter passed
         filtered_formatted = []
         for e in formatted_results:
@@ -868,7 +914,9 @@ class HttpUnifiedAPIHandler(object):
             if found:
                 filtered_formatted.append(e)
 
-        return format_response({
-            "blockHeight": block_height,
-            "list": filtered_formatted,
-        })
+        return format_response(
+            {
+                "blockHeight": block_height,
+                "list": filtered_formatted,
+            }
+        )

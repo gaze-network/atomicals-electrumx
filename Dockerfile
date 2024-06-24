@@ -6,7 +6,7 @@ WORKDIR /usr/src/app
 
 # Install the libs needed by leveldb
 RUN apt-get update \
-    && apt-get -y install \ 
+    && apt-get -y install \
     build-essential libc6-dev libncurses5-dev libncursesw5-dev libreadline-dev libleveldb-dev
 
 RUN python -m venv venv \

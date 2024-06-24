@@ -1032,9 +1032,11 @@ class DB:
             self.event_hash_version = state.get("event_hash_version", None)
             if self.event_hash_version is not None:
                 if self.event_hash_version != electrumx.gaze_event_hash_version:
-                    raise self.DBError(f"Your event hash version is {self.event_hash_version} but this software "
-                                       f"only supports version {electrumx.gaze_event_hash_version}. Please reset "
-                                       f"your database to block 808080 or lower and restart this software to reindex.")
+                    raise self.DBError(
+                        f"Your event hash version is {self.event_hash_version} but this software "
+                        f"only supports version {electrumx.gaze_event_hash_version}. Please reset "
+                        f"your database to block 808080 or lower and restart this software to reindex."
+                    )
             else:
                 self.event_hash_version = electrumx.gaze_event_hash_version
             # backwards compat
@@ -1339,7 +1341,7 @@ class DB:
     # Get general data by key
     def get_general_data(self, key):
         return self.utxo_db.get(key)
-    
+
     def get_block_timestamp(self, height: int) -> "int | None":
         block_timestamp_key = b"ts" + pack_le_uint32(height)
         block_timestamp_value = self.utxo_db.get(block_timestamp_key)
@@ -1366,6 +1368,7 @@ class DB:
                     break
                 count += 1
             return count
+
         return await run_in_thread(query)
 
     async def _get_created_atomical_utxos_by_hash(self, hash: bytes, target_height: int) -> list[UTXO]:
@@ -1377,15 +1380,16 @@ class DB:
                 # stop if we have reached the target height
                 if created_height > target_height:
                     break
-                location = key[2 + TX_HASH_LEN + 4:]
+                location = key[2 + TX_HASH_LEN + 4 :]
                 tx_hash = location[:TX_HASH_LEN]
                 (output_idx,) = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
                 (sat_value,) = unpack_le_uint64(value)
                 created_atomical_utxos.append(UTXO(-1, output_idx, tx_hash, created_height, sat_value))
             return created_atomical_utxos
+
         # run in thread to avoid blocking the main thread
         return await run_in_thread(query)
-    
+
     async def _get_spent_atomical_utxos_by_hash(self, hash: bytes, target_height: int) -> list[UTXO]:
         def query():
             prefix = b"as" + hash
@@ -1395,11 +1399,12 @@ class DB:
                 # stop if we have reached the target height
                 if spent_height > target_height:
                     break
-                location = key[2 + TX_HASH_LEN + 4:]
+                location = key[2 + TX_HASH_LEN + 4 :]
                 tx_hash = location[:TX_HASH_LEN]
                 (output_idx,) = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
-                spent_atomical_utxos.append(UTXO(-1, output_idx, tx_hash, 0, 0)) # spent height and value is not needed
+                spent_atomical_utxos.append(UTXO(-1, output_idx, tx_hash, 0, 0))  # spent height and value is not needed
             return spent_atomical_utxos
+
         # run in thread to avoid blocking the main thread
         return await run_in_thread(query)
 
@@ -1409,13 +1414,13 @@ class DB:
         spent_locations: dict[bytes, bool] = {}
         for spent_utxo in spent_utxos:
             spent_locations[spent_utxo.tx_hash + pack_le_uint32(spent_utxo.tx_pos)] = True
-        
+
         return [e for e in created_utxos if e.tx_hash + pack_le_uint32(e.tx_pos) not in spent_locations]
-    
+
     async def get_utxos_at_height_by_atomical_id(self, atomical_id: bytes, target_height: int) -> list[UTXO]:
         atomical_id_hash = sha256(atomical_id)
         return await self._get_utxos_at_height_by_hash(atomical_id_hash, target_height)
-    
+
     async def get_utxos_at_height_by_pk_script(self, pk_script: bytes, target_height: int) -> list[UTXO]:
         pk_script_hash = sha256(pk_script)
         return await self._get_utxos_at_height_by_hash(pk_script_hash, target_height)
