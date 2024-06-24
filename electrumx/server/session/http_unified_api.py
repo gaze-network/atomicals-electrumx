@@ -560,8 +560,12 @@ class HttpUnifiedAPIHandler(object):
 
         # get all tx filter by wallet
         else:
-            # TODO
-            tx_hashes = []
+            reverse = False
+            hashX = scripthash_to_hashX(sha256(get_script_from_address(address)))
+            history_data, _ = await self.session_mgr.get_history_op(hashX, -1, 0, None, reverse)
+            for history in history_data:
+                tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
+                tx_hashes.append(hash_to_hex_str(tx_hash))
 
             # use address = None to skip filtering check
             address = None
