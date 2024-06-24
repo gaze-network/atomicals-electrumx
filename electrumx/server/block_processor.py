@@ -3655,7 +3655,7 @@ class BlockProcessor:
         # Speed up distmint processing by caching the ticker mint request info
         distmint_ticker_cache = {}
         dft_count = 0
-        for tx, tx_hash in txs:
+        for tx_idx, (tx, tx_hash) in enumerate(txs):
             has_at_least_one_valid_atomicals_operation = False
             hashXs = []
             append_hashX = hashXs.append
@@ -3716,6 +3716,8 @@ class BlockProcessor:
                 # For example if the reveal of a realm/container/ticker mint is greater than
                 # MINT_REALM_CONTAINER_TICKER_COMMIT_REVEAL_DELAY_BLOCKS then the realm request is invalid.
                 put_general_data(b"tx" + tx_hash, to_le_uint64(tx_num) + to_le_uint32(height))
+                # maps tx hash to tx index in block
+                put_general_data(b"txidx" + tx_hash, to_le_uint32(tx_idx))
                 # Detect all protocol operations in the transaction witness inputs
                 # Only parse witness information for Atomicals if activated
                 atomicals_operations_found_at_inputs = parse_protocols_operations_from_witness_array(
@@ -4378,6 +4380,9 @@ class BlockProcessor:
 
             # Delete the tx hash number
             self.delete_general_data(b"tx" + tx_hash)
+
+            # Delete the tx index
+            self.delete_general_data(b"txidx" + tx_hash)
 
             # Backup any Atomicals NFT, FT, or DFT mints
             fake_header = b""  # Header is not needed in the Delete=True context

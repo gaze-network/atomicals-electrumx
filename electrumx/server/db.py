@@ -275,6 +275,10 @@ class DB:
         # Key: b'as' + atomical_id_or_script_hash + spent_height + location
         # Value: empty
         # "maps atomical id or script hash to the locations associated with the atomical id or script hash, with spent height"
+        # ---
+        # Key: b'txidx' + tx_hash
+        # Value: tx index
+        # "maps tx hash to tx index in block"
         #
         #
         #
@@ -1348,6 +1352,14 @@ class DB:
         if block_timestamp_value:
             (block_timestamp,) = unpack_le_uint32(block_timestamp_value)
             return block_timestamp
+        return None
+    
+    def get_tx_index_from_tx_hash(self, tx_hash: bytes) -> "int | None":
+        tx_index_key = b"txidx" + tx_hash
+        tx_index_value = self.utxo_db.get(tx_index_key)
+        if tx_index_value:
+            (tx_index,) = unpack_le_uint32(tx_index_value)
+            return tx_index
         return None
 
     def get_mint_completed_at_height(self, atomical_id: bytes) -> "int | None":
