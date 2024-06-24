@@ -812,7 +812,6 @@ class HttpUnifiedAPIHandler(object):
             completed_at_height = None
             completed_at = None
 
-
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
         return format_response(
             {
