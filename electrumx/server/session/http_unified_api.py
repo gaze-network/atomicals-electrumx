@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
     from electrumx.server.controller import SessionManager
 
+supported_ops = ["dft", "mint-dft", "mint-ft", "split", "transfer", "burn", "custom-color"]
+
 
 class JSONBytesEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -358,6 +360,10 @@ class HttpUnifiedAPIHandler(object):
         tx_transfers: dict = tx_data.get("transfers", {})
         tx_op = tx_data.get("op", "")
 
+        # filter only supported op
+        if tx_op not in supported_ops:
+            return None
+
         tx_payload: dict = tx_info.get("payload", {})
         tx_payload_args: dict = tx_payload.get("args", {})
 
@@ -417,7 +423,7 @@ class HttpUnifiedAPIHandler(object):
                 outputs.append(output_map)
 
         mints = {}
-        mint_ticker = tx_payload_args.get("mint_ticker", "")
+        mint_ticker: str = tx_payload_args.get("mint_ticker", "")
         if mint_ticker:
             tx_info_outputs: dict = tx_info.get("outputs", {})
             mint_outputs: list[dict] = tx_info_outputs.get(0, [])  # mint output should be in index 0
@@ -469,11 +475,16 @@ class HttpUnifiedAPIHandler(object):
 
         if f_atomical_id:
             f_atomical_id_str = location_id_bytes_to_compact(f_atomical_id)
-            found_input = f_atomical_id_str in [e["id"] for e in inputs]
-            fount_output = f_atomical_id_str in [e["id"] for e in outputs]
-            # TODO: more place to check?
-            if not (found_input or fount_output):
-                return None
+            # only dft, must check atomical related field `commit_tx_id`
+            if tx_op == "dft":
+                this_atomical_id = commit_tx_id + "i" + str(commit_index)
+                if this_atomical_id != f_atomical_id_str:
+                    return None
+            else:
+                found_input = f_atomical_id_str in [e["id"] for e in inputs]
+                fount_output = f_atomical_id_str in [e["id"] for e in outputs]
+                if not (found_input or fount_output):
+                    return None
 
         return {
             "txHash": tx_hash,

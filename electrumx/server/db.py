@@ -1353,7 +1353,7 @@ class DB:
             (block_timestamp,) = unpack_le_uint32(block_timestamp_value)
             return block_timestamp
         return None
-    
+
     def get_tx_index_from_tx_hash(self, tx_hash: bytes) -> "int | None":
         tx_index_key = b"txidx" + tx_hash
         tx_index_value = self.utxo_db.get(tx_index_key)
