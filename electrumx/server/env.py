@@ -223,10 +223,26 @@ class Env(EnvBase):
         return services
 
     def set_gaze_network_report_config(self):
-        gaze_network_report_enabled = self.boolean('GAZE_NETWORK_REPORTING_ENABLED', False if is_test_environment() else True)
+        gaze_network_report_enabled = None
+        gazenw_report_enable_raw: str | None = self.default('GAZE_NETWORK_REPORTING_ENABLED', None)
+
+        if gazenw_report_enable_raw is not None:
+            gazenw_report_enable_raw = gazenw_report_enable_raw.strip().lower()
+            raw_is_true = gazenw_report_enable_raw in ["1", "y", "yes", "t", "true"]
+            raw_is_false = gazenw_report_enable_raw in ["0", "n", "no", "f", "false"]
+            
+            if raw_is_true and not raw_is_false:
+                gaze_network_report_enabled = True
+            if raw_is_false and not raw_is_true:
+                gaze_network_report_enabled = False
+
+        # set default value
+        if gaze_network_report_enabled is None:
+            gaze_network_report_enabled = False if is_test_environment() else True
+
         if not gaze_network_report_enabled:
             return None
-        
+
         gaze_network_report_url = self.default('GAZE_NETWORK_REPORTING_URL', 'https://indexer.api.gaze.network')
         gaze_network_report_name = self.required('GAZE_NETWORK_REPORTING_NAME')
         gaze_network_report_website_url = self.default('GAZE_NETWORK_REPORTING_WEBSITE_URL', None)
