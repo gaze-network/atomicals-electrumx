@@ -163,9 +163,9 @@ class HttpUnifiedAPIHandler(object):
 
     def _block_height_to_unix_timestamp(self, block_height: int) -> int:
         db_block_ts = self.session_mgr.db.get_block_timestamp(block_height)
-        # TODO: should fall back to query timestamp from rpc if not found in db
         if db_block_ts:
             return db_block_ts
+        # TODO: should fall back to query timestamp from rpc if not found in db
         return 0
 
     @error_handler
@@ -561,7 +561,6 @@ class HttpUnifiedAPIHandler(object):
             # use address = None to skip filtering check
             address = None
 
-        # get all tx filter by wallet
         else:
             # get all tx filter by id
             reverse = False
@@ -628,6 +627,9 @@ class HttpUnifiedAPIHandler(object):
         atomical = await self._get_atomical(atomical_id)
 
         atomical_type = atomical.get("type", "")
+        if atomical_type == "NFT":
+            return format_response(None, 400, "NFT is not supported.")
+
         subtype = atomical.get("subtype", "")
         mint_mode = atomical.get("$mint_mode", "")
         mint_info: dict = atomical.get("mint_info", {})
@@ -648,8 +650,8 @@ class HttpUnifiedAPIHandler(object):
                 if max_supply < 0:
                     mint_amount = mint_info_args.get("mint_amount", 0)
                     max_supply = DFT_MINT_MAX_MAX_COUNT_DENSITY * mint_amount
-        elif atomical_type == "NFT":
-            mint_mode = ""
+        # NOTE: unsupported
+        # elif atomical_type == "NFT":
         else:
             raise Exception("unreachable code: invalid atomical type")
 
@@ -663,42 +665,32 @@ class HttpUnifiedAPIHandler(object):
         else:
             raise Exception("unreachable code: invalid subtype")
 
-        if block_height == latest_block_height:
-            atomical: dict = await self.session_mgr.db.populate_extended_atomical_holder_info(atomical_id, atomical)
-            if atomical["type"] == "FT":
+        # support only atomical FT
+        if atomical_type == "FT":
+            if block_height == latest_block_height:
+                atomical: dict = await self.session_mgr.db.populate_extended_atomical_holder_info(atomical_id, atomical)
                 for holder in atomical.get("holders", []):
-                    percent = holder["holding"] / max_supply
+                    amount = holder.get("holding", 0)
                     formatted_results.append(
                         {
                             "address": get_address_from_output_script(bytes.fromhex(holder["script"])),
                             "pkScript": holder["script"],
-                            "amount": str(holder["holding"]),
-                            "percent": percent,
+                            "amount": str(amount),
+                            "percent": amount / max_supply,
                         }
                     )
-            elif atomical["type"] == "NFT":
-                for holder in atomical.get("holders", []):
+            else:
+                # get historical data
+                data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
+                for pk_scriptb, amount in data.get("holders", {}).items():
                     formatted_results.append(
                         {
-                            "address": get_address_from_output_script(bytes.fromhex(holder["script"])),
-                            "pkScript": holder["script"],
-                            "amount": str(holder["holding"]),
-                            "percent": 1,
+                            "address": get_address_from_output_script(pk_scriptb),
+                            "pkScript": pk_scriptb.hex(),
+                            "amount": str(amount),
+                            "percent": amount / max_supply,
                         }
                     )
-        else:
-            # TODO: remove all NFT cases
-            # support only atomical FT
-            data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
-            for pk_scriptb, amount in data.get("holders", {}).items():
-                formatted_results.append(
-                    {
-                        "address": get_address_from_output_script(pk_scriptb),
-                        "pkScript": pk_scriptb.hex(),
-                        "amount": str(amount),
-                        "percent": amount / max_supply,
-                    }
-                )
 
         # sort by holding desc
         formatted_results.sort(key=lambda x: (int(x["amount"]), x["address"]), reverse=True)
@@ -736,6 +728,9 @@ class HttpUnifiedAPIHandler(object):
         atomical: dict = await self._get_atomical(atomical_id)
 
         atomical_type = atomical.get("type", "")
+        if atomical_type == "NFT":
+            return format_response(None, 400, "NFT is not supported.")
+
         subtype = atomical.get("subtype", "")
         mint_mode = atomical.get("$mint_mode", "")
         mint_info: dict = atomical.get("mint_info", {})
@@ -756,8 +751,8 @@ class HttpUnifiedAPIHandler(object):
                 if max_supply < 0:
                     mint_amount = mint_info_args.get("mint_amount", 0)
                     max_supply = DFT_MINT_MAX_MAX_COUNT_DENSITY * mint_amount
-        elif atomical_type == "NFT":
-            mint_mode = ""
+        # NOTE: unsupported
+        # elif atomical_type == "NFT":
         else:
             raise Exception("unreachable code: invalid atomical type")
 
