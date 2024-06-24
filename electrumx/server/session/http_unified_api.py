@@ -121,7 +121,7 @@ class HttpUnifiedAPIHandler(object):
             return None
 
     # check if this is atomicalId or ticker
-    def _parse_request_id(self, id) -> bytes | None:
+    def _parse_atomical_id(self, id) -> bytes | None:
         if not id:
             return None
         atomical_id = None
@@ -163,6 +163,7 @@ class HttpUnifiedAPIHandler(object):
 
     def _block_height_to_unix_timestamp(self, block_height: int) -> int:
         db_block_ts = self.session_mgr.db.get_block_timestamp(block_height)
+        # TODO: should fall back to query timestamp from rpc if not found in db
         if db_block_ts:
             return db_block_ts
         return 0
@@ -298,7 +299,7 @@ class HttpUnifiedAPIHandler(object):
         id = request.query.get("id")
         atomical_id = None
         if id:
-            atomical_id = self._parse_request_id(id)
+            atomical_id = self._parse_atomical_id(id)
             if not atomical_id:
                 return format_response(None, 400, "Invalid ID.")
 
@@ -334,7 +335,7 @@ class HttpUnifiedAPIHandler(object):
             id = raw_query.get("id")
             atomical_id = None
             if id:
-                atomical_id = self._parse_request_id(id)
+                atomical_id = self._parse_atomical_id(id)
                 if not atomical_id:
                     return format_response(None, 400, f"query index {idx}: invalid ID.")
 
@@ -355,7 +356,6 @@ class HttpUnifiedAPIHandler(object):
     async def _get_tx_detail(self, tx_hash: str, f_atomical_id: bytes | None, f_address: str | None) -> dict | None:
         tx_data = await self.session_mgr.get_transaction_detail(tx_hash)
         block_height = tx_data.get("height", 0)
-        tx_num = tx_data.get("tx_num", 0)
         tx_info: dict = tx_data.get("info", {})
         tx_transfers: dict = tx_data.get("transfers", {})
         tx_op = tx_data.get("op", "")
@@ -428,7 +428,7 @@ class HttpUnifiedAPIHandler(object):
             tx_info_outputs: dict = tx_info.get("outputs", {})
             mint_outputs: list[dict] = tx_info_outputs.get(0, [])  # mint output should be in index 0
             for output_data in mint_outputs:
-                atomica_id_str = output_data.get("atomical_id", "")
+                atomical_id_str = output_data.get("atomical_id", "")
                 address = output_data.get("address", "")
                 mint_amount = output_data.get("value", 0)
                 pk_script = ""
@@ -436,14 +436,14 @@ class HttpUnifiedAPIHandler(object):
                     pk_script = get_script_from_address(address).hex()
                 output_map = {
                     "index": output_data.get("index", ""),
-                    "id": atomica_id_str,
+                    "id": atomical_id_str,
                     "amount": str(mint_amount),
                     "decimals": get_decimals(),
                     "address": address,
                     "pkScript": pk_script,
                 }
                 outputs.append(output_map)
-                prev_mint: dict | None = mints.get("atomica_id_str", None)
+                prev_mint: dict | None = mints.get(atomical_id_str, None)
                 if not prev_mint:
                     prev_mint = {
                         "amount": "0",
@@ -453,7 +453,7 @@ class HttpUnifiedAPIHandler(object):
                     "amount": str(int(prev_mint["amount"]) + mint_amount),
                     "decimals": get_decimals(),
                 }
-                mints[atomica_id_str] = new_mint
+                mints[atomical_id_str] = new_mint
 
         burns = {}
         for k, v in tx_burned_fts.items():
@@ -532,7 +532,7 @@ class HttpUnifiedAPIHandler(object):
         id = request.query.get("id")
         atomical_id = None
         if id:
-            atomical_id = self._parse_request_id(id)
+            atomical_id = self._parse_atomical_id(id)
             if not atomical_id:
                 return format_response(None, 400, "Invalid ID.")
 
@@ -549,8 +549,20 @@ class HttpUnifiedAPIHandler(object):
             # get all tx in single block_height
             tx_hashes = self.session_mgr.db.get_atomicals_block_txs(block_height)
 
-        # no block_height found, use more exhausive search
-        elif atomical_id:
+        # no block_height found, use more exhaustive search
+        elif address:
+            reverse = False
+            hashX = scripthash_to_hashX(sha256(get_script_from_address(address)))
+            history_data, _ = await self.session_mgr.get_history_op(hashX, -1, 0, None, reverse)
+            for history in history_data:
+                tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
+                tx_hashes.append(hash_to_hex_str(tx_hash))
+
+            # use address = None to skip filtering check
+            address = None
+
+        # get all tx filter by wallet
+        else:
             # get all tx filter by id
             reverse = False
             hashX = double_sha256(atomical_id)
@@ -562,24 +574,9 @@ class HttpUnifiedAPIHandler(object):
             # use atomical_id = None to skip filtering check
             atomical_id = None
 
-        # get all tx filter by wallet
-        else:
-            reverse = False
-            hashX = scripthash_to_hashX(sha256(get_script_from_address(address)))
-            history_data, _ = await self.session_mgr.get_history_op(hashX, -1, 0, None, reverse)
-            for history in history_data:
-                tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
-                tx_hashes.append(hash_to_hex_str(tx_hash))
-
-            # use address = None to skip filtering check
-            address = None
-
         txs = await asyncio.gather(*[self._get_tx_detail(tx_hash, atomical_id, address) for tx_hash in tx_hashes])
         # filter None out
-        res_txs = []
-        for tx in txs:
-            if tx:
-                res_txs.append(tx)
+        res_txs = [tx for tx in txs if tx is not None]
 
         return format_response(
             {
@@ -614,7 +611,7 @@ class HttpUnifiedAPIHandler(object):
         id = request.match_info.get("id", "")
         if not id:
             return format_response(None, 400, "ID is required.")
-        atomical_id = self._parse_request_id(id)
+        atomical_id = self._parse_atomical_id(id)
         if not atomical_id:
             return format_response(None, 400, "Invalid ID.")
 
@@ -653,6 +650,8 @@ class HttpUnifiedAPIHandler(object):
                     max_supply = DFT_MINT_MAX_MAX_COUNT_DENSITY * mint_amount
         elif atomical_type == "NFT":
             mint_mode = ""
+        else:
+            raise Exception("unreachable code: invalid atomical type")
 
         if subtype == "decentralized":
             atomical: dict = await self.session_mgr.bp.get_dft_mint_info_rpc_format_by_atomical_id(atomical_id)
@@ -661,6 +660,8 @@ class HttpUnifiedAPIHandler(object):
         elif subtype == "direct":
             atomical: dict = await self.session_mgr.bp.get_ft_mint_info_rpc_format_by_atomical_id(atomical_id)
             minted_amount = max_supply  # entire mint in direct mint
+        else:
+            raise Exception("unreachable code: invalid subtype")
 
         if block_height == latest_block_height:
             atomical: dict = await self.session_mgr.db.populate_extended_atomical_holder_info(atomical_id, atomical)
@@ -686,6 +687,7 @@ class HttpUnifiedAPIHandler(object):
                         }
                     )
         else:
+            # TODO: remove all NFT cases
             # support only atomical FT
             data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
             for pk_scriptb, amount in data.get("holders", {}).items():
@@ -717,7 +719,7 @@ class HttpUnifiedAPIHandler(object):
         id = request.match_info.get("id", "")
         if not id:
             return format_response(None, 400, "ID is required.")
-        atomical_id = self._parse_request_id(id)
+        atomical_id = self._parse_atomical_id(id)
         if not atomical_id:
             return format_response(None, 400, "Invalid ID.")
 
@@ -756,6 +758,8 @@ class HttpUnifiedAPIHandler(object):
                     max_supply = DFT_MINT_MAX_MAX_COUNT_DENSITY * mint_amount
         elif atomical_type == "NFT":
             mint_mode = ""
+        else:
+            raise Exception("unreachable code: invalid atomical type")
 
         if subtype == "decentralized":
             atomical: dict = await self.session_mgr.bp.get_dft_mint_info_rpc_format_by_atomical_id(atomical_id)
@@ -764,6 +768,8 @@ class HttpUnifiedAPIHandler(object):
         elif subtype == "direct":
             atomical: dict = await self.session_mgr.bp.get_ft_mint_info_rpc_format_by_atomical_id(atomical_id)
             minted_amount = max_supply  # entire mint in direct mint
+        else:
+            raise Exception("unreachable code: invalid subtype")
 
         location_summary: dict = atomical.get("location_summary", {})
         holder_count = location_summary.get("unique_holders", 0)
@@ -779,6 +785,16 @@ class HttpUnifiedAPIHandler(object):
         deployed_at_height = commit_tx_height
         deployed_at = self._block_height_to_unix_timestamp(deployed_at_height)
         deploy_tx_hash = commit_tx_id
+
+        # change time-sensitive data from block_height
+        if block_height != latest_block_height:
+            # support only atomical FT
+            data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
+            holder_count = data["count"]
+            circulating_supply = data["total"]
+            if subtype == "decentralized":
+                mint_count = await self.session_mgr.db.get_atomical_mint_count_at_height(atomical_id, block_height)
+                minted_amount = mint_count * mint_amount
 
         # mint completion data
         completed_at_height = None
@@ -796,15 +812,6 @@ class HttpUnifiedAPIHandler(object):
             completed_at_height = None
             completed_at = None
 
-        # change time-sensitive data from block_height
-        if block_height != latest_block_height:
-            # support only atomical FT
-            data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
-            holder_count = data["count"]
-            circulating_supply = data["total"]
-            if subtype == "decentralized":
-                mint_count = await self.session_mgr.db.get_atomical_mint_count_at_height(atomical_id, block_height)
-                minted_amount = mint_count * mint_amount
 
         compact_atomical_id = location_id_bytes_to_compact(atomical_id)
         return format_response(
@@ -900,14 +907,14 @@ class HttpUnifiedAPIHandler(object):
         id = request.query.get("id")
         atomical_id = None
         if id:
-            atomical_id = self._parse_request_id(id)
+            atomical_id = self._parse_atomical_id(id)
             if not atomical_id:
                 return format_response(None, 400, "Invalid ID.")
 
         formatted_results: list[dict] = []
         utxos: list[UTXO] = []
 
-        # bypass for latest_block
+        # bypass for latest_block (quicker)
         if block_height == latest_block_height:
             hashX = scripthash_to_hashX(sha256(pk_scriptb))
             utxos = await self.session_mgr.db.all_utxos(hashX)
@@ -916,19 +923,16 @@ class HttpUnifiedAPIHandler(object):
 
         formatted_results = await asyncio.gather(*[self._utxo_to_formatted(utxo) for utxo in utxos])
 
-        # filter by atomical_id
-        if atomical_id:
-            atomical_id_str = location_id_bytes_to_compact(atomical_id)
-
         # return only UTXOs that contain atomical, or filter if parameter passed
         filtered_formatted = []
         for e in formatted_results:
             atomical_list: list = e["extend"]["atomicals"]
-            # skip UTXO that not contain atomical
+            # skip UTXO that does not contain atomical
             if len(atomical_list) == 0:
                 continue
             found = True
             if atomical_id:
+                atomical_id_str = location_id_bytes_to_compact(atomical_id)
                 found = atomical_id_str in [a["atomicalId"] for a in atomical_list]
             if found:
                 filtered_formatted.append(e)
