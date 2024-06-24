@@ -486,10 +486,14 @@ class HttpUnifiedAPIHandler(object):
                 if not (found_input or fount_output):
                     return None
 
+        tx_index_in_block = self.session_mgr.db.get_tx_index_from_tx_hash(hex_str_to_hash(tx_hash))
+        if not tx_index_in_block:
+            tx_index_in_block = 0
+
         return {
             "txHash": tx_hash,
             "blockHeight": block_height,
-            "index": tx_num,
+            "index": tx_index_in_block,
             "timestamp": self._block_height_to_unix_timestamp(block_height),
             "inputs": inputs,
             "outputs": outputs,
