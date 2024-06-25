@@ -667,30 +667,16 @@ class HttpUnifiedAPIHandler(object):
 
         # support only atomical FT
         if atomical_type == "FT":
-            if block_height == latest_block_height:
-                atomical: dict = await self.session_mgr.db.populate_extended_atomical_holder_info(atomical_id, atomical)
-                for holder in atomical.get("holders", []):
-                    amount = holder.get("holding", 0)
-                    formatted_results.append(
-                        {
-                            "address": get_address_from_output_script(bytes.fromhex(holder["script"])),
-                            "pkScript": holder["script"],
-                            "amount": str(amount),
-                            "percent": amount / max_supply,
-                        }
-                    )
-            else:
-                # get historical data
-                data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
-                for pk_scriptb, amount in data.get("holders", {}).items():
-                    formatted_results.append(
-                        {
-                            "address": get_address_from_output_script(pk_scriptb),
-                            "pkScript": pk_scriptb.hex(),
-                            "amount": str(amount),
-                            "percent": amount / max_supply,
-                        }
-                    )
+            data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
+            for pk_scriptb, amount in data.get("holders", {}).items():
+                formatted_results.append(
+                    {
+                        "address": get_address_from_output_script(pk_scriptb),
+                        "pkScript": pk_scriptb.hex(),
+                        "amount": str(amount),
+                        "percent": amount / max_supply,
+                    }
+                )
 
         # sort by holding desc
         formatted_results.sort(key=lambda x: (int(x["amount"]), x["address"]), reverse=True)
