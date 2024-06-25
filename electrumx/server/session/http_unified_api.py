@@ -848,11 +848,13 @@ class HttpUnifiedAPIHandler(object):
         for atomical_id in atomical_ids:
             atomical = await self._get_atomical(atomical_id)
             ticker = atomical.get("$ticker", "")
+            atomical_type = atomical.get("type", "")
             atomical_out = {
                 "atomicalId": location_id_bytes_to_compact(atomical_id),
-                "ticker": ticker,
-                "amount": str(atomical_amount),
-                "decimals": get_decimals(),
+                "type": atomical_type,
+                "ftTicker": ticker,
+                "ftAmount": str(atomical_amount),
+                "ftDecimals": get_decimals(),
             }
             formatted_atomicals.append(atomical_out)
         res = {
