@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 supported_ops = ["dft", "mint-dft", "mint-ft", "split", "transfer", "burn", "custom-color"]
 
+MAX_UINT64 = 9223372036854775807
 
 class JSONBytesEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -553,7 +554,7 @@ class HttpUnifiedAPIHandler(object):
         elif address:
             reverse = False
             hashX = scripthash_to_hashX(sha256(get_script_from_address(address)))
-            history_data, _ = await self.session_mgr.get_history_op(hashX, -1, 0, None, reverse)
+            history_data, _ = await self.session_mgr.get_history_op(hashX, MAX_UINT64, 0, None, reverse)
             for history in history_data:
                 tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
                 tx_hashes.append(hash_to_hex_str(tx_hash))
@@ -565,7 +566,7 @@ class HttpUnifiedAPIHandler(object):
             # get all tx filter by id
             reverse = False
             hashX = double_sha256(atomical_id)
-            history_data, _ = await self.session_mgr.get_history_op(hashX, -1, 0, None, reverse)
+            history_data, _ = await self.session_mgr.get_history_op(hashX, MAX_UINT64, 0, None, reverse)
             for history in history_data:
                 tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
                 tx_hashes.append(hash_to_hex_str(tx_hash))
