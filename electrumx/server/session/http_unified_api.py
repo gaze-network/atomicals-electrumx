@@ -670,9 +670,10 @@ class HttpUnifiedAPIHandler(object):
         if atomical_type == "FT":
             data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
             for pk_scriptb, amount in data.get("holders", {}).items():
+                address = get_address_from_output_script(pk_scriptb)
                 formatted_results.append(
                     {
-                        "address": get_address_from_output_script(pk_scriptb),
+                        "address": address if address else "",
                         "pkScript": pk_scriptb.hex(),
                         "amount": str(amount),
                         "percent": amount / max_supply,
@@ -763,6 +764,8 @@ class HttpUnifiedAPIHandler(object):
 
         reveal_location_script: str = mint_info.get("reveal_location_script")
         deployer_address = get_address_from_output_script(bytes.fromhex(reveal_location_script))
+        if not deployer_address:
+            deployer_address = ""
 
         deployed_at_height = commit_tx_height
         deployed_at = self._block_height_to_unix_timestamp(deployed_at_height)
