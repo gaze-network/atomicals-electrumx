@@ -736,9 +736,6 @@ class HttpUnifiedAPIHandler(object):
                 mint_amount = mint_info_args.get("mint_amount", 0)
             else:
                 max_supply = atomical.get("$max_supply", -1)
-                if max_supply < 0:
-                    mint_amount = mint_info_args.get("mint_amount", 0)
-                    max_supply = DFT_MINT_MAX_MAX_COUNT_DENSITY * mint_amount
         # NOTE: unsupported
         # elif atomical_type == "NFT":
         else:
