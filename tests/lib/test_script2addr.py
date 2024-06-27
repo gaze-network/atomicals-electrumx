@@ -8,7 +8,8 @@ from electrumx.lib.script2addr import (
 
 def test_get_address_from_output_script():
     # the inverse of this test is in test_bitcoin: test_address_to_script
-    addr_from_script = lambda script: get_address_from_output_script(bytes.fromhex(script))
+    def addr_from_script(script):
+        return get_address_from_output_script(bytes.fromhex(script))
 
     # bech32/bech32m native segwit
     # test vectors from BIP-0173/BIP-0350
