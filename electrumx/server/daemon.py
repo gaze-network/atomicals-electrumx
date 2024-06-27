@@ -147,7 +147,7 @@ class Daemon:
                     if kind == "application/json":
                         resp_body = await resp.json(loads=json_deserialize)
                         # temporary rate limit workaround for quicknode.com
-                        if type(resp_body) == list and any(
+                        if isinstance(resp_body, list) and any(
                             "request limit reached - reduce calls per second or upgrade your account at quicknode.com"
                             in item.get("message", "")
                             for item in resp_body
@@ -184,7 +184,7 @@ class Daemon:
         retry_count = 0
         while True:
             try:
-                result = await self._send_data(data, len(payload) if type(payload) == list else 1)
+                result = await self._send_data(data, len(payload) if isinstance(payload, list) else 1)
                 result = processor(result)
                 if on_good_message:
                     self.logger.info(on_good_message)

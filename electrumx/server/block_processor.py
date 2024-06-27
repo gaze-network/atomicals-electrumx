@@ -14,7 +14,7 @@ import requests
 from aiorpcx import CancelledError, run_in_thread
 
 from electrumx.lib.atomicals_blueprint_builder import AtomicalsTransferBlueprintBuilder
-from electrumx.lib.hash import HASHX_LEN, double_sha256, hash_to_hex_str
+from electrumx.lib.hash import HASHX_LEN, double_sha256, hash_to_hex_str, sha256
 from electrumx.lib.script import (
     SCRIPTHASH_LEN,
     is_unspendable_genesis,
@@ -25,6 +25,7 @@ from electrumx.lib.util import (
     OldTaskGroup,
     chunks,
     class_logger,
+    pack_be_uint32,
     pack_be_uint64,
     pack_le_uint16,
     pack_le_uint32,

@@ -156,7 +156,7 @@ class SessionManager:
                             error_middleware(self),
                             request_middleware(self),
                         ],
-                        client_max_size=self.env.session_max_size_http
+                        client_max_size=self.env.session_max_size_http,
                     )
                     handler = HttpSession(self, self.db, self.mempool, self.peer_mgr, kind)
                     await handler.add_endpoints(app.router, SESSION_PROTOCOL_MAX)

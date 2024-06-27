@@ -36,6 +36,7 @@ supported_ops = ["dft", "mint-dft", "mint-ft", "split", "transfer", "burn", "cus
 
 MAX_UINT64 = 9223372036854775807
 
+
 class JSONBytesEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, bytes):
@@ -46,7 +47,7 @@ class JSONBytesEncoder(json.JSONEncoder):
 
 def format_response(result: "dict | None", status: "int | None" = None, error: "str | None" = None) -> "Response":
     if error:
-        if status == None:
+        if status is None:
             status = 500
         return json_response(
             {
@@ -55,7 +56,7 @@ def format_response(result: "dict | None", status: "int | None" = None, error: "
             status=status,
             dumps=lambda o: json.dumps(o, cls=JSONBytesEncoder),
         )
-    if status == None:
+    if status is None:
         status = 200
     return json_response(
         {
@@ -128,7 +129,7 @@ class HttpUnifiedAPIHandler(object):
         atomical_id = None
         try:
             atomical_id = compact_to_location_id_bytes(id)
-        except:
+        except Exception:
             atomical_id = self._resolve_ticker_to_atomical_id(id)
             if not atomical_id:
                 return None
@@ -141,7 +142,7 @@ class HttpUnifiedAPIHandler(object):
         addr = None
         try:
             pk_bytes = bytes.fromhex(wallet)
-        except:
+        except Exception:
             pk_bytes = None
         if pk_bytes:
             addr_from_pk = get_address_from_output_script(pk_bytes)
@@ -258,7 +259,7 @@ class HttpUnifiedAPIHandler(object):
         atomical_ids = list(balances.keys())
         atomicals_list = await asyncio.gather(*[self._get_atomical(atomical_id) for atomical_id in atomical_ids])
         atomicals: dict[bytes, dict] = {
-            atomical_id: atomical for atomical_id, atomical in zip(atomical_ids, atomicals_list)
+            atomical_id: atomical for atomical_id, atomical in zip(atomical_ids, atomicals_list, strict=True)
         }
 
         populated_balances: "list[dict]" = []  # atomical_id -> { "amount": int, "ticker": str | None }
@@ -350,7 +351,7 @@ class HttpUnifiedAPIHandler(object):
             ]
         )
         formatted_results = [
-            {"blockHeight": query.block_height, "list": result} for query, result in zip(queries, results)
+            {"blockHeight": query.block_height, "list": result} for query, result in zip(queries, results, strict=True)
         ]
         return format_response({"list": formatted_results})
 

@@ -54,7 +54,8 @@ def test_get_address_from_output_script():
 
 
 def test_get_script_from_address():
-    script_hex_from_addr = lambda address: get_script_from_address(address).hex()
+    def script_hex_from_addr(address: str) -> str:
+        return get_script_from_address(address).hex()
 
     # bech32/bech32m native segwit
     # test vectors from BIP-0173/BIP-0350

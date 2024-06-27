@@ -419,9 +419,7 @@ class AtomicalsTransferBlueprintBuilder:
         # Use a simplified mapping of NFTs using FIFO to the outputs
         if sort_fifo:
             next_output_idx = 0
-            map_output_idxs_for_atomicals: "dict[int, dict[Literal['atomicals'], dict[bytes, AtomicalInputSummary]]]" = (
-                {}
-            )
+            map_output_idxs_for_atomicals: "dict[int, dict[Literal['atomicals'], dict[bytes, AtomicalInputSummary]]]" = {}
             # Build a map of input ids to NFTs
             for _input_idx, atomicals_ids_map in nft_map.items():
                 found_atomical_at_input = False
@@ -447,9 +445,7 @@ class AtomicalsTransferBlueprintBuilder:
                     next_output_idx += 1
             return AtomicalNftOutputBlueprintAssignmentSummary(map_output_idxs_for_atomicals)
         else:
-            map_output_idxs_for_atomicals: "dict[int, dict[Literal['atomicals'], dict[bytes, AtomicalInputSummary]]]" = (
-                {}
-            )
+            map_output_idxs_for_atomicals: "dict[int, dict[Literal['atomicals'], dict[bytes, AtomicalInputSummary]]]" = {}
             # Assign NFTs the legacy way with 1:1 inputs to outputs
             for atomical_id, atomical_summary_info in nft_atomicals.items():
                 expected_output_index = AtomicalsTransferBlueprintBuilder.calculate_nft_output_index_legacy(
