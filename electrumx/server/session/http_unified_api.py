@@ -658,11 +658,9 @@ class HttpUnifiedAPIHandler(object):
             raise Exception("unreachable code: invalid atomical type")
 
         if subtype == "decentralized":
-            atomical: dict = await self.session_mgr.bp.get_dft_mint_info_rpc_format_by_atomical_id(atomical_id)
-            mint_count = atomical["dft_info"]["mint_count"]
+            mint_count = self.session_mgr.bp.get_distmints_count_by_atomical_id(block_height, atomical_id, True)
             minted_amount = mint_count * mint_amount  # total minted
         elif subtype == "direct":
-            atomical: dict = await self.session_mgr.bp.get_ft_mint_info_rpc_format_by_atomical_id(atomical_id)
             minted_amount = max_supply  # entire mint in direct mint
         else:
             raise Exception("unreachable code: invalid subtype")
