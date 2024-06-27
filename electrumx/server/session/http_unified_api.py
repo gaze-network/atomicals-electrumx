@@ -586,19 +586,16 @@ class HttpUnifiedAPIHandler(object):
         )
 
     async def _get_arc20_holders_by_block_height(self, atomical_id: bytes, block_height: int) -> dict:
-        utxos = await self.session_mgr.db.get_utxos_at_height_by_atomical_id(atomical_id, block_height)
+        utxos = await self.session_mgr.db.get_atomical_utxos_at_height_by_atomical_id(atomical_id, block_height)
 
         total_value = 0
         holder_map: dict[bytes, int] = {}
 
         # group by pk_script and map to address
         for utxo in utxos:
-            tx_id_str = hash_to_hex_str(utxo.tx_hash)
-            location = compact_to_location_id_bytes(tx_id_str + "i" + str(utxo.tx_pos))
-            pk_scriptb = self.session_mgr.bp.get_pk_script_at_location(location)
-            prev_value = holder_map.get(pk_scriptb, 0)
-            holder_map[pk_scriptb] = prev_value + utxo.value
-            total_value = total_value + utxo.value
+            prev_value = holder_map.get(utxo.pk_script, 0)
+            holder_map[utxo.pk_script] = prev_value + utxo.atomical_value
+            total_value = total_value + utxo.atomical_value
 
         return {
             "total": total_value,
@@ -916,7 +913,7 @@ class HttpUnifiedAPIHandler(object):
             hashX = scripthash_to_hashX(sha256(pk_scriptb))
             utxos = await self.session_mgr.db.all_utxos(hashX)
         else:
-            utxos = await self.session_mgr.db.get_utxos_at_height_by_pk_script(pk_scriptb, block_height)
+            utxos = await self.session_mgr.db.get_atomical_utxos_at_height_by_pk_script(pk_scriptb, block_height)
 
         formatted_results = await asyncio.gather(*[self._utxo_to_formatted(utxo) for utxo in utxos])
 
