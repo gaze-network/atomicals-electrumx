@@ -303,8 +303,8 @@ def get_address_from_output_script(_bytes: bytes) -> Optional[str]:
 
 def get_script_from_address(address: str) -> Optional[bytes]:
     # segwit/taproot
-    if address.startswith(SEGWIT_HRP):
-        witver, witprog = segwit_addr.decode(SEGWIT_HRP, address)
+    if address.startswith(get_segwit_hrp()):
+        witver, witprog = segwit_addr.decode(get_segwit_hrp(), address)
         script = segwit_addr.segwit_scriptpubkey(witver, witprog)
         return script
 
