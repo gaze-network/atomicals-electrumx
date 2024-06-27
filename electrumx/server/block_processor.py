@@ -2225,14 +2225,14 @@ class BlockProcessor:
         scripthash = double_sha256(txout.pk_script)
         hashX = self.coin.hashX_from_script(txout.pk_script)
         sat_value = pack_le_uint64(txout.value)
-        atomical_value = pack_le_uint64(atomical_value)
+        atomical_valueb = pack_le_uint64(atomical_value)
         put_general_data = self.general_data_cache.__setitem__
         put_general_data(b"po" + location, txout.pk_script)
         tx_numb = pack_le_uint64(tx_num)[:TXNUM_LEN]
         self.put_atomicals_utxo(
             location,
             atomical_id,
-            hashX + scripthash + sat_value + atomical_value + tx_numb,
+            hashX + scripthash + sat_value + atomical_valueb + tx_numb,
         )
         self.put_or_delete_created_atomicals_utxo(
             location, atomical_id, txout.pk_script, height, txout.value, atomical_value, False
