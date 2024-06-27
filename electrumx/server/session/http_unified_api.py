@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Optional
 
 from aiohttp.web import json_response
 from aiohttp.web_urldispatcher import UrlDispatcher
+from aiorpcx import run_in_thread
 
 from electrumx.lib import util
 from electrumx.lib.hash import (
@@ -26,6 +27,7 @@ from electrumx.lib.util_atomicals import (
     parse_protocols_operations_from_witness_array,
 )
 from electrumx.server.db import UTXO
+from electrumx.server.history import TXNUM_LEN
 
 if TYPE_CHECKING:
     from aiohttp.web import Request, Response
@@ -512,6 +514,37 @@ class HttpUnifiedAPIHandler(object):
             },
         }
 
+    async def get_history_limited(self, hashX, limit=None, op=None, reverse=True):
+        def query():
+            history_data = []
+            txnum_padding = bytes(8 - TXNUM_LEN)
+            for _, hist in self.session_mgr.db.history.db.iterator(prefix=hashX, reverse=reverse):
+                for tx_numb in util.chunks(hist, TXNUM_LEN):
+                    (tx_num,) = util.unpack_le_uint64(tx_numb + txnum_padding)
+                    op_data = self.session_mgr._tx_num_op_cache.get(tx_num)
+                    if not op_data:
+                        op_prefix_key = b"op" + util.pack_le_uint64(tx_num)
+                        tx_op = self.session_mgr.db.utxo_db.get(op_prefix_key)
+                        if tx_op:
+                            (op_data,) = util.unpack_le_uint32(tx_op)
+                            self.session_mgr._tx_num_op_cache[tx_num] = op_data
+
+                    # append only txs with atomical operation
+                    if not op_data:
+                        continue
+                    if op is not None and op_data != op:
+                        continue
+                    history_data.append({"tx_num": tx_num, "op": op_data})
+                if limit is not None and len(history_data) >= limit:
+                    break
+            if reverse:
+                history_data.sort(key=lambda x: x["tx_num"], reverse=reverse)
+            if limit is not None:
+                history_data = history_data[:limit]
+            return history_data
+
+        return await run_in_thread(query)
+
     @error_handler
     async def get_arc20_transactions(self, request: "Request") -> "Response":
         # parse wallet (optional)
@@ -546,6 +579,10 @@ class HttpUnifiedAPIHandler(object):
         txs = []
         tx_hashes = []
 
+        # TODO: remove this limit when we can fix this problem
+        # temporary limit for large queries
+        tx_limit = 3000
+
         # if has block_height filter, use this way first
         if block_height:
             # get all tx in single block_height
@@ -553,9 +590,9 @@ class HttpUnifiedAPIHandler(object):
 
         # no block_height found, use more exhaustive search
         elif address:
-            reverse = False
             hashX = scripthash_to_hashX(sha256(get_script_from_address(address)))
-            history_data, _ = await self.session_mgr.get_history_op(hashX, MAX_UINT64, 0, None, reverse)
+            history_data = await self.get_history_limited(hashX, tx_limit, op=None, reverse=True) # get latest txs
+            history_data = list(reversed(history_data))  # reverse the reverse to get txs in ascending order
             for history in history_data:
                 tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
                 tx_hashes.append(hash_to_hex_str(tx_hash))
@@ -565,9 +602,9 @@ class HttpUnifiedAPIHandler(object):
 
         else:
             # get all tx filter by id
-            reverse = False
             hashX = double_sha256(atomical_id)
-            history_data, _ = await self.session_mgr.get_history_op(hashX, MAX_UINT64, 0, None, reverse)
+            history_data = await self.get_history_limited(hashX, tx_limit, op=None, reverse=True) # get latest txs
+            history_data = list(reversed(history_data))  # reverse the reverse to get txs in ascending order
             for history in history_data:
                 tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
                 tx_hashes.append(hash_to_hex_str(tx_hash))
@@ -575,6 +612,10 @@ class HttpUnifiedAPIHandler(object):
             # use atomical_id = None to skip filtering check
             atomical_id = None
 
+        # TODO: remove this limit when we can fix this problem
+        # temporary limit for large queries, limit to latest transactions only
+        if len(tx_hashes) > tx_limit:
+            tx_hashes = tx_hashes[-tx_limit:]
         txs = await asyncio.gather(*[self._get_tx_detail(tx_hash, atomical_id, address) for tx_hash in tx_hashes])
         # filter None out
         res_txs = [tx for tx in txs if tx is not None]
