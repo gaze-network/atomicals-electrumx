@@ -905,10 +905,11 @@ class HttpUnifiedAPIHandler(object):
             atomical_out = {
                 "atomicalId": location_id_bytes_to_compact(atomical_id),
                 "type": atomical_type,
-                "ftTicker": ticker,
-                "ftAmount": str(atomical_amount),
-                "ftDecimals": get_decimals(),
             }
+            if atomical_type == "FT":
+                atomical_out["ftTicker"] = ticker
+                atomical_out["ftAmount"] = str(atomical_amount)
+                atomical_out["ftDecimals"] = get_decimals()
             formatted_atomicals.append(atomical_out)
         res = {
             "txHash": tx_id_str,
