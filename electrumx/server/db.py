@@ -1406,9 +1406,9 @@ class DB:
                 location = key[2 + TX_HASH_LEN + 4 :]
                 tx_hash = location[:TX_HASH_LEN]
                 (output_idx,) = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
-                (sat_value,) = unpack_le_uint64(value[:4])
-                (atomical_value,) = unpack_le_uint64(value[4 : 4 + 4])
-                pk_script = value[4 + 4 :]
+                (sat_value,) = unpack_le_uint64(value[:8])
+                (atomical_value,) = unpack_le_uint64(value[8 : 8 + 8])
+                pk_script = value[8 + 8 :]
                 created_atomical_utxos.append(
                     AtomicalUTXO(output_idx, tx_hash, created_height, sat_value, atomical_value, pk_script)
                 )
