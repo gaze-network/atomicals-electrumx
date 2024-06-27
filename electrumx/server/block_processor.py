@@ -14,9 +14,69 @@ from aiorpcx import CancelledError, run_in_thread
 import requests
 
 from electrumx.lib.atomicals_blueprint_builder import AtomicalsTransferBlueprintBuilder
-from electrumx.lib.script import is_unspendable_genesis, is_unspendable_legacy
+from electrumx.lib.hash import HASHX_LEN, double_sha256, hash_to_hex_str
+from electrumx.lib.script import (
+    SCRIPTHASH_LEN,
+    is_unspendable_genesis,
+    is_unspendable_legacy,
+)
 from electrumx.lib.tx import Tx
-from electrumx.lib.util_atomicals import *
+from electrumx.lib.util import (
+    OldTaskGroup,
+    chunks,
+    class_logger,
+    pack_be_uint64,
+    pack_le_uint16,
+    pack_le_uint32,
+    pack_le_uint64,
+    unpack_le_uint16_from,
+    unpack_le_uint32,
+    unpack_le_uint32_from,
+    unpack_le_uint64,
+    unpack_le_uint64_from,
+)
+from electrumx.lib.util_atomicals import (
+    DMINT_PATH,
+    MINT_REALM_CONTAINER_TICKER_COMMIT_REVEAL_DELAY_BLOCKS,
+    MINT_SUBNAME_COMMIT_PAYMENT_DELAY_BLOCKS,
+    MINT_SUBNAME_RULES_BECOME_EFFECTIVE_IN_BLOCKS,
+    SUBREALM_MINT_PATH,
+    auto_encode_bytes_elements,
+    calculate_expected_bitwork,
+    calculate_latest_state_from_mod_history,
+    compact_to_location_id_bytes,
+    convert_db_mint_info_to_rpc_mint_info_format,
+    encode_atomical_ids_hex,
+    expand_spend_utxo_data,
+    format_name_type_candidates_to_rpc,
+    format_name_type_candidates_to_rpc_for_subname,
+    get_container_dmint_format_status,
+    get_mint_info_op_factory,
+    get_name_request_candidate_status,
+    get_subname_request_candidate_status,
+    has_requested_proof_of_work,
+    is_compact_atomical_id,
+    is_event_operation,
+    is_mint_pow_valid,
+    is_seal_operation,
+    is_txid_valid_for_perpetual_bitwork,
+    is_valid_bitwork_string,
+    is_valid_container_string_name,
+    is_valid_dmt_op_format,
+    is_valid_realm_string_name,
+    is_valid_regex,
+    is_valid_subrealm_string_name,
+    is_valid_ticker_string,
+    is_within_acceptable_blocks_for_general_reveal,
+    is_within_acceptable_blocks_for_name_reveal,
+    is_within_acceptable_blocks_for_sub_item_payment,
+    location_id_bytes_to_compact,
+    pad_bytes_n,
+    parse_protocols_operations_from_witness_array,
+    unpack_mint_info,
+    validate_dmitem_mint_args_with_container_dmint,
+    validate_rules_data,
+)
 from electrumx.server.daemon import Daemon, DaemonError
 from electrumx.server.db import COMP_TXID_LEN, DB, FlushData
 from electrumx.server.history import TXNUM_LEN
@@ -25,9 +85,9 @@ from electrumx.version import electrumx_version
 from electrumx.server.gaze_network_report_client import GazeNetworkReportClient
 
 if TYPE_CHECKING:
-    from electrumx.lib.coins import Coin, AtomicalsCoinMixin
-    from electrumx.server.env import Env
+    from electrumx.lib.coins import AtomicalsCoinMixin, Coin
     from electrumx.server.controller import Notifications
+    from electrumx.server.env import Env
 
 import re
 import sys
@@ -386,7 +446,7 @@ class BlockProcessor:
         def diff_pos(hashes1, hashes2):
             """Returns the index of the first difference in the hash lists.
             If both lists match returns their length."""
-            for n, (hash1, hash2) in enumerate(zip(hashes1, hashes2)):
+            for n, (hash1, hash2) in enumerate(zip(hashes1, hashes2, strict=False)):
                 if hash1 != hash2:
                     return n
             return len(hashes)
@@ -651,7 +711,7 @@ class BlockProcessor:
                         # Someone apparently made a payment marker for an invalid parent realm id. They made a mistake, ignoring it..
                         if not parent_request_realm and not parent_request_subrealm:
                             self.logger.info(
-                                f"get_expected_subrealm_payment_info: not parent_request_realm or not parent_request_subrealm."
+                                "get_expected_subrealm_payment_info: not parent_request_realm or not parent_request_subrealm."
                             )
                             return None, None, None, None
 
@@ -908,7 +968,7 @@ class BlockProcessor:
             location_ids = []
             limit_counter = 0
             offset_counter = 0
-            for atomical_gi_db_key, atomical_gi_db_value in self.db.utxo_db.iterator(prefix=prefix):
+            for _atomical_gi_db_key, atomical_gi_db_value in self.db.utxo_db.iterator(prefix=prefix):
                 if offset_counter >= offset:
                     location_ids.append(atomical_gi_db_value.hex())
                     limit_counter += 1
@@ -932,7 +992,7 @@ class BlockProcessor:
             # Query all the gi key in the db for the atomical
             prefix = b"gi" + atomical_id
             count = 0
-            for atomical_gi_db_key, atomical_gi_db_value in self.db.utxo_db.iterator(prefix=prefix):
+            for _atomical_gi_db_key, _atomical_gi_db_value in self.db.utxo_db.iterator(prefix=prefix):
                 count += 1
             return count
 
@@ -1003,7 +1063,7 @@ class BlockProcessor:
             atomical_id = atomical_i_db_key[1 + ATOMICAL_ID_LEN :]
             prefix = b"a" + atomical_id + location_id
             found_at_least_one = False
-            for atomical_a_db_key, atomical_a_db_value in self.db.utxo_db.iterator(prefix=prefix):
+            for _atomical_a_db_key, _atomical_a_db_value in self.db.utxo_db.iterator(prefix=prefix):
                 found_at_least_one = True
             # For live_run == True we must throw an exception since the b'a' record
             # should always be there when we are spending
@@ -1552,7 +1612,7 @@ class BlockProcessor:
         if claim_type == "direct":
             self.logger.info(f"get_subrealm_parent_realm_info claim_type_is_not_direct {mint_info}")
             # return parent_realm_id, mint_initiated_result
-            for idx, atomical_entry_list in atomicals_spent_at_inputs.items():
+            for _idx, atomical_entry_list in atomicals_spent_at_inputs.items():
                 for atomical_entry in atomical_entry_list:
                     atomical_id = atomical_entry["atomical_id"]
                     if atomical_id == parent_realm_id:
@@ -1564,7 +1624,7 @@ class BlockProcessor:
             return None, None
         # It must be a rule based mint then
         if claim_type != "rule":
-            self.logger.info(f"get_subrealm_parent_realm_info: claim type was not direct or rule, skipping...")
+            self.logger.info("get_subrealm_parent_realm_info: claim type was not direct or rule, skipping...")
             return None, None
         # if we got this far then it means it was not parent initiated and it could require bitwork to proceed
         expected_payment_height = mint_info["commit_height"]
@@ -1609,7 +1669,7 @@ class BlockProcessor:
                 return parent_realm_id, "bitwork"
             else:
                 self.logger.info(
-                    f"get_subrealm_parent_realm_info no outputs or bitworkc or bitworkr provided therefore invalid subrealm"
+                    "get_subrealm_parent_realm_info no outputs or bitworkc or bitworkr provided therefore invalid subrealm"
                 )
                 return None, None
 
@@ -1693,7 +1753,7 @@ class BlockProcessor:
                 return parent_container_id, "bitwork"
             else:
                 self.logger.warning(
-                    f"get_dmitem_parent_container_info no outputs or bitworkc or bitworkr provided therefore invalid dmint item"
+                    "get_dmitem_parent_container_info no outputs or bitworkc or bitworkr provided therefore invalid dmint item"
                 )
                 return None, None
         self.logger.warning(f"get_dmitem_parent_container_info no_matched_price_point request_dmitem={request_dmitem}")
@@ -1911,7 +1971,7 @@ class BlockProcessor:
                     else:
                         self.put_op_data(tx_num, tx_hash, "mint-ft")
         else:
-            raise IndexError(f"Fatal index error Create Invalid")
+            raise IndexError("Fatal index error Create Invalid")
 
         # Save mint data fields
         put_general_data = self.general_data_cache.__setitem__
@@ -2669,10 +2729,9 @@ class BlockProcessor:
             atomical_active_location_key,
             atomical_active_location_value,
         ) in self.db.utxo_db.iterator(prefix=atomical_active_location_key_prefix):
-            (location_value,) = unpack_le_uint64(
-                atomical_active_location_value[HASHX_LEN + SCRIPTHASH_LEN : HASHX_LEN + SCRIPTHASH_LEN + 8]
-            )
-            active_supply += location_value
+            location = atomical_active_location_key[1 + ATOMICAL_ID_LEN : 1 + ATOMICAL_ID_LEN + ATOMICAL_ID_LEN]
+            atomical_value = self.db.get_uxto_atomicals_value(location, atomical_id)
+            active_supply += atomical_value
             scripthash = atomical_active_location_value[HASHX_LEN : HASHX_LEN + SCRIPTHASH_LEN]
             unique_holders[scripthash] = True
         atomical_result["unique_holders"] = len(unique_holders)
@@ -2747,7 +2806,7 @@ class BlockProcessor:
                 "reveal_location_value": init_mint_info["reveal_location_value"],
                 "args": init_mint_info["args"],
                 "meta": init_mint_info["meta"],
-                "ctx": init_mint_info["ctx"]
+                "ctx": init_mint_info["ctx"],
                 # Do not include init data by default since it could be rather large binary
                 # It can be retrieved via the state
                 # 'init': init_mint_info.get('init')
@@ -3480,7 +3539,7 @@ class BlockProcessor:
         spend_atomicals_utxo = self.spend_atomicals_utxo
         atomicals_receive_at_outputs = {}
         txout_index = 0
-        for txout in tx.outputs:
+        for _txout in tx.outputs:
             # Find all the existing transferred atomicals and DO NOT spend the Atomicals utxos (live_run == False)
             atomicals_transferred_list = spend_atomicals_utxo(txid, txout_index, False)
             if len(atomicals_transferred_list):
@@ -3820,7 +3879,7 @@ class BlockProcessor:
     
     # Sanity safety check method to call at end of block processing to ensure no dft token inflation
     def validate_no_dft_inflation(self, atomical_id_map, height):
-        for atomical_id_of_dft_ticker, notused in atomical_id_map.items():
+        for atomical_id_of_dft_ticker, _ in atomical_id_map.items():
             # Get the max mints allowed for the dft ticker (if set)
             mint_info_for_ticker = self.get_atomicals_id_mint_info(atomical_id_of_dft_ticker, False)
             max_mints = mint_info_for_ticker["$max_mints"]
@@ -4026,18 +4085,13 @@ class BlockProcessor:
                 txnum_padding = bytes(8 - TXNUM_LEN)
                 (tx_num_padded,) = unpack_le_uint64(tx_numb + txnum_padding)
                 tx_hash = atomical_id_key[
-                    PREFIX_BYTE_LEN
-                    + ATOMICAL_ID_LEN
-                    + TXNUM_LEN : PREFIX_BYTE_LEN
+                    PREFIX_BYTE_LEN + ATOMICAL_ID_LEN + TXNUM_LEN : PREFIX_BYTE_LEN
                     + ATOMICAL_ID_LEN
                     + TXNUM_LEN
                     + TX_HASH_LEN
                 ]
                 out_idx_packed = atomical_id_key[
-                    PREFIX_BYTE_LEN
-                    + ATOMICAL_ID_LEN
-                    + TXNUM_LEN
-                    + TX_HASH_LEN : PREFIX_BYTE_LEN
+                    PREFIX_BYTE_LEN + ATOMICAL_ID_LEN + TXNUM_LEN + TX_HASH_LEN : PREFIX_BYTE_LEN
                     + ATOMICAL_ID_LEN
                     + TXNUM_LEN
                     + TX_HASH_LEN
@@ -4088,11 +4142,11 @@ class BlockProcessor:
             )
             regex_pattern = regex_price_point.get("p", None)
             if not regex_pattern:
-                print_applicable_rule_log(f"get_applicable_rule_by_height: empty pattern")
+                print_applicable_rule_log("get_applicable_rule_by_height: empty pattern")
                 continue
 
             if "(" in regex_pattern or ")" in regex_pattern:
-                print_applicable_rule_log(f"get_applicable_rule_by_height: invalid regex with parens")
+                print_applicable_rule_log("get_applicable_rule_by_height: invalid regex with parens")
                 return None
 
             try:
@@ -4100,7 +4154,7 @@ class BlockProcessor:
                 valid_pattern = re.compile(rf"{regex_pattern}")
                 # Match the pattern to the proposed subrealm_name
                 if not valid_pattern.match(proposed_subnameid):
-                    print_applicable_rule_log(f"get_applicable_rule_by_height: invalid pattern match")
+                    print_applicable_rule_log("get_applicable_rule_by_height: invalid pattern match")
                     continue
                 print_applicable_rule_log(
                     f"get_applicable_rule_by_height: successfully matched pattern and price regex_pattern={regex_pattern}"
@@ -4117,7 +4171,7 @@ class BlockProcessor:
     def spent_atomical_serialize(self, spent_array):
         if not spent_array:
             return
-        self.logger.info(f"spent_atomical_serialize:START ")
+        self.logger.info("spent_atomical_serialize:START ")
 
         for spent in spent_array:
             atomical_id = location_id_bytes_to_compact(spent["atomical_id"])
@@ -4127,7 +4181,7 @@ class BlockProcessor:
             self.logger.info(f"spent_item location_id={location_id}")
             self.logger.info(f"spent_item data={data.hex()}")
 
-        self.logger.info(f"spent_atomical_serialize:END")
+        self.logger.info("spent_atomical_serialize:END")
         return
 
     def backup_txs(
@@ -4586,7 +4640,7 @@ class LTORBlockProcessor(BlockProcessor):
         hashXs_by_tx = [set() for _ in txs]
 
         # Add the new UTXOs
-        for (tx, tx_hash), hashXs in zip(txs, hashXs_by_tx):
+        for (tx, tx_hash), hashXs in zip(txs, hashXs_by_tx, strict=False):
             add_hashXs = hashXs.add
             tx_numb = to_le_uint64(tx_num)[:TXNUM_LEN]
 
@@ -4606,7 +4660,7 @@ class LTORBlockProcessor(BlockProcessor):
 
         # Spend the inputs
         # A separate for-loop here allows any tx ordering in block.
-        for (tx, tx_hash), hashXs in zip(txs, hashXs_by_tx):
+        for (tx, _tx_hash), hashXs in zip(txs, hashXs_by_tx, strict=False):
             add_hashXs = hashXs.add
             for txin in tx.inputs:
                 if txin.is_generation():
@@ -4640,7 +4694,7 @@ class LTORBlockProcessor(BlockProcessor):
         # Restore coins that had been spent
         # (may include coins made then spent in this block)
         n = 0
-        for tx, tx_hash in txs:
+        for tx, _tx_hash in txs:
             for txin in tx.inputs:
                 if txin.is_generation():
                     continue
