@@ -673,9 +673,10 @@ class HttpUnifiedAPIHandler(object):
                 atomical: dict = await self.session_mgr.db.populate_extended_atomical_holder_info(atomical_id, atomical)
                 for holder in atomical.get("holders", []):
                     amount = holder.get("holding", 0)
+                    address = get_address_from_output_script(bytes.fromhex(holder["script"]))
                     formatted_results.append(
                         {
-                            "address": get_address_from_output_script(bytes.fromhex(holder["script"])),
+                            "address": address if address else "",
                             "pkScript": holder["script"],
                             "amount": str(amount),
                             "percent": amount / max_supply,
