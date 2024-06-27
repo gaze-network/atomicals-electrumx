@@ -68,6 +68,7 @@ class UTXO:
     height: int  # block height
     value: int  # in satoshis
 
+
 @dataclass(order=True)
 class AtomicalUTXO:
     __slots__ = "tx_pos", "tx_hash", "height", "sat_value", "atomical_value", "pk_script"
@@ -77,6 +78,7 @@ class AtomicalUTXO:
     sat_value: int  # in satoshis
     atomical_value: int
     pk_script: bytes
+
 
 @attr.s(slots=True)
 class FlushData:
@@ -1404,10 +1406,12 @@ class DB:
                 location = key[2 + TX_HASH_LEN + 4 :]
                 tx_hash = location[:TX_HASH_LEN]
                 (output_idx,) = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
-                (sat_value,) = unpack_le_uint64(value[ : 4])
+                (sat_value,) = unpack_le_uint64(value[:4])
                 (atomical_value,) = unpack_le_uint64(value[4 : 4 + 4])
-                pk_script = value[4 + 4 : ]
-                created_atomical_utxos.append(AtomicalUTXO(output_idx, tx_hash, created_height, sat_value, atomical_value, pk_script))
+                pk_script = value[4 + 4 :]
+                created_atomical_utxos.append(
+                    AtomicalUTXO(output_idx, tx_hash, created_height, sat_value, atomical_value, pk_script)
+                )
             return created_atomical_utxos
 
         # run in thread to avoid blocking the main thread
@@ -1425,7 +1429,9 @@ class DB:
                 location = key[2 + TX_HASH_LEN + 4 :]
                 tx_hash = location[:TX_HASH_LEN]
                 (output_idx,) = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
-                spent_atomical_utxos.append((tx_hash, output_idx))  # spent height, sat value, and atomical value are not needed
+                spent_atomical_utxos.append(
+                    (tx_hash, output_idx)
+                )  # spent height, sat value, and atomical value are not needed
             return spent_atomical_utxos
 
         # run in thread to avoid blocking the main thread
@@ -1440,11 +1446,15 @@ class DB:
 
         return [e for e in created_utxos if (e.tx_hash, e.tx_pos) not in spent_locations]
 
-    async def get_atomical_utxos_at_height_by_atomical_id(self, atomical_id: bytes, target_height: int) -> list[AtomicalUTXO]:
+    async def get_atomical_utxos_at_height_by_atomical_id(
+        self, atomical_id: bytes, target_height: int
+    ) -> list[AtomicalUTXO]:
         atomical_id_hash = sha256(atomical_id)
         return await self._get_atomical_utxos_at_height_by_hash(atomical_id_hash, target_height)
 
-    async def get_atomical_utxos_at_height_by_pk_script(self, pk_script: bytes, target_height: int) -> list[AtomicalUTXO]:
+    async def get_atomical_utxos_at_height_by_pk_script(
+        self, pk_script: bytes, target_height: int
+    ) -> list[AtomicalUTXO]:
         pk_script_hash = sha256(pk_script)
         return await self._get_atomical_utxos_at_height_by_hash(pk_script_hash, target_height)
 

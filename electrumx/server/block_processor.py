@@ -980,7 +980,14 @@ class BlockProcessor:
         self.atomicals_utxo_cache[location_id] = cache
 
     def put_or_delete_created_atomicals_utxo(
-        self, location_id: bytes, atomical_id: bytes, pk_script: bytes, height: int, sat_value: int, atomical_value: int, Delete: bool
+        self,
+        location_id: bytes,
+        atomical_id: bytes,
+        pk_script: bytes,
+        height: int,
+        sat_value: int,
+        atomical_value: int,
+        Delete: bool,
     ):
         self.logger.debug(
             f"put_or_delete_created_atomicals_utxo: atomical_id={location_id_bytes_to_compact(atomical_id)}, location_id={location_id_bytes_to_compact(location_id)}, pk_script={pk_script.hex()}, height={height}, sat_value={sat_value}, Delete={Delete}"
@@ -1342,7 +1349,7 @@ class BlockProcessor:
             txout.pk_script,
             height,
             mint_info["reveal_location_value"],
-            mint_info["reveal_location_value"], # minted atomical value is always equal to the sat value
+            mint_info["reveal_location_value"],  # minted atomical value is always equal to the sat value
             False,
         )
         atomical_id = mint_info["id"]
@@ -1374,7 +1381,7 @@ class BlockProcessor:
                 txout.pk_script,
                 height,
                 mint_info["reveal_location_value"],
-                mint_info["reveal_location_value"], # minted atomical value is always equal to the sat value
+                mint_info["reveal_location_value"],  # minted atomical value is always equal to the sat value
                 False,
             )
         subtype = mint_info["subtype"]
@@ -2227,7 +2234,9 @@ class BlockProcessor:
             atomical_id,
             hashX + scripthash + sat_value + atomical_value + tx_numb,
         )
-        self.put_or_delete_created_atomicals_utxo(location, atomical_id, txout.pk_script, height, txout.value, atomical_value, False)
+        self.put_or_delete_created_atomicals_utxo(
+            location, atomical_id, txout.pk_script, height, txout.value, atomical_value, False
+        )
 
     def put_nft_outputs_by_blueprint(self, nft_blueprint, operations_found_at_inputs, tx_hash, tx, tx_num, height):
         put_general_data = self.general_data_cache.__setitem__
@@ -2287,7 +2296,13 @@ class BlockProcessor:
                 put_bytes: bytes = hashX + scripthash + sat_value + atomical_value + tx_numb
                 self.put_atomicals_utxo(location, atomical_id, put_bytes)
                 self.put_or_delete_created_atomicals_utxo(
-                    location, atomical_id, txout.pk_script, height, txout.value, txout.value, False # NFT value is definitely equals to the sat value.
+                    location,
+                    atomical_id,
+                    txout.pk_script,
+                    height,
+                    txout.value,
+                    txout.value,
+                    False,  # NFT value is definitely equals to the sat value.
                 )
 
     def put_ft_outputs_by_blueprint(self, ft_blueprint, operations_found_at_inputs, tx_hash, tx, tx_num, height):
