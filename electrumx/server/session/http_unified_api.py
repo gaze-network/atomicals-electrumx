@@ -581,7 +581,7 @@ class HttpUnifiedAPIHandler(object):
 
         # TODO: remove this limit when we can fix this problem
         # temporary limit for large queries
-        tx_limit = 3000
+        tx_limit = 5000
 
         # if has block_height filter, use this way first
         if block_height:
