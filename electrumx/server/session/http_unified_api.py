@@ -591,7 +591,7 @@ class HttpUnifiedAPIHandler(object):
         # no block_height found, use more exhaustive search
         elif address:
             hashX = scripthash_to_hashX(sha256(get_script_from_address(address)))
-            history_data = await self.get_history_limited(hashX, tx_limit, op=None, reverse=True) # get latest txs
+            history_data = await self.get_history_limited(hashX, tx_limit, op=None, reverse=True)  # get latest txs
             history_data = list(reversed(history_data))  # reverse the reverse to get txs in ascending order
             for history in history_data:
                 tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
@@ -603,7 +603,7 @@ class HttpUnifiedAPIHandler(object):
         else:
             # get all tx filter by id
             hashX = double_sha256(atomical_id)
-            history_data = await self.get_history_limited(hashX, tx_limit, op=None, reverse=True) # get latest txs
+            history_data = await self.get_history_limited(hashX, tx_limit, op=None, reverse=True)  # get latest txs
             history_data = list(reversed(history_data))  # reverse the reverse to get txs in ascending order
             for history in history_data:
                 tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
