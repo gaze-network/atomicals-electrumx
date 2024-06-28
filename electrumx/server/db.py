@@ -1560,6 +1560,17 @@ class DB:
             txs_list.append(hash_to_hex_str(block_txs_prefix_value))
         return txs_list
 
+    def get_atomicals_block_txs_with_tx_num(self, height) -> list[dict]:
+        block_txs_prefix = b"th" + pack_le_uint32(height)
+        txs_list = []
+        for block_txs_prefix_key, block_txs_prefix_value in self.utxo_db.iterator(prefix=block_txs_prefix):
+            (key_height,) = unpack_le_uint32(block_txs_prefix_key[2:6])
+            (tx_num,) = unpack_le_uint64(block_txs_prefix_key[6:14])
+            if key_height != height:
+                break
+            txs_list.append({"tx_hash": hash_to_hex_str(block_txs_prefix_value), "tx_num": tx_num})
+        return txs_list
+
     def get_active_supply(self, atomical_id):
         active_supply = 0
         atomical_active_location_key_prefix = b"a" + atomical_id

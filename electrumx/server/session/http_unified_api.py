@@ -165,6 +165,12 @@ class HttpUnifiedAPIHandler(object):
         block_height = int(block_height_str)
         return block_height
 
+    # check if block range is valid (-1 means "latest block")
+    def _parse_block_height_for_range(self, block_height_str: str) -> int | None:
+        if block_height_str == "-1":
+            return -1
+        return self._parse_block_height(block_height_str)
+
     def _block_height_to_unix_timestamp(self, block_height: int) -> int:
         db_block_ts = self.session_mgr.db.get_block_timestamp(block_height)
         if db_block_ts:
@@ -514,13 +520,28 @@ class HttpUnifiedAPIHandler(object):
             },
         }
 
-    async def get_history_limited(self, hashX, limit=None, op=None, reverse=True):
+    async def get_txs_from_history_limited(
+        self,
+        hashX,
+        fromBlock: int,
+        toBlock: int,
+        f_atomical_id: bytes | None,
+        f_address: str | None,
+        limit=None,
+        reverse=True,
+    ):
         def query():
-            history_data = []
+            txs = []
             txnum_padding = bytes(8 - TXNUM_LEN)
             for _, hist in self.session_mgr.db.history.db.iterator(prefix=hashX, reverse=reverse):
                 for tx_numb in util.chunks(hist, TXNUM_LEN):
                     (tx_num,) = util.unpack_le_uint64(tx_numb + txnum_padding)
+                    tx_hash, height = self.session_mgr.db.fs_tx_hash(tx_num)
+                    # skip txs outside block range
+                    if not (fromBlock <= height <= toBlock):
+                        continue
+
+                    # check tx has atomical operation, so we don't waste time on daemon for non-atomical txs
                     op_data = self.session_mgr._tx_num_op_cache.get(tx_num)
                     if not op_data:
                         op_prefix_key = b"op" + util.pack_le_uint64(tx_num)
@@ -532,16 +553,18 @@ class HttpUnifiedAPIHandler(object):
                     # append only txs with atomical operation
                     if not op_data:
                         continue
-                    if op is not None and op_data != op:
-                        continue
-                    history_data.append({"tx_num": tx_num, "op": op_data})
-                if limit is not None and len(history_data) >= limit:
+                    tx = self._get_tx_detail(tx_hash, f_atomical_id, f_address)
+                    if tx:
+                        txs.append(tx)
+
+                # only break when all tx_nums in hist are processed, since tx_nums are always sorted in ascending order and we need all of them if reverse=True
+                if limit is not None and len(txs) >= limit:
                     break
             if reverse:
-                history_data.sort(key=lambda x: x["tx_num"], reverse=reverse)
+                txs.sort(key=lambda x: (x["blockHeight"], x["index"]), reverse=reverse)
             if limit is not None:
-                history_data = history_data[:limit]
-            return history_data
+                txs = txs[:limit]
+            return txs
 
         return await run_in_thread(query)
 
@@ -555,13 +578,19 @@ class HttpUnifiedAPIHandler(object):
             if not address:
                 return format_response(None, 400, "Invalid wallet.")
 
-        # parse block_height
-        q_block_height = request.query.get("blockHeight")
-        block_height = None
-        if q_block_height is not None:
-            block_height = self._parse_block_height(q_block_height)
-            if block_height is None:
-                return format_response(None, 400, "Invalid block height.")
+        # parse block heights filter
+        q_from_block = request.query.get("fromBlock")
+        q_to_block = request.query.get("toBlock")
+        from_block = 0
+        to_block = -1
+        if q_from_block is not None:
+            from_block = self._parse_block_height_for_range(q_from_block)
+            if from_block is None:
+                return format_response(None, 400, "Invalid fromBlock.")
+        if q_to_block is not None:
+            to_block = self._parse_block_height_for_range(q_to_block)
+            if to_block is None:
+                return format_response(None, 400, "Invalid toBlock.")
 
         # parse atomical_id
         id = request.query.get("id")
@@ -571,58 +600,69 @@ class HttpUnifiedAPIHandler(object):
             if not atomical_id:
                 return format_response(None, 400, "Invalid ID.")
 
-        # no parameters passed, default to filter by latest_block_height
-        if not (address or atomical_id or block_height):
-            latest_block_height = self.session_mgr.db.db_height
-            block_height = latest_block_height
+        latest_block_height = self.session_mgr.db.db_height
+        if from_block == -1:
+            from_block = latest_block_height
+        if to_block == -1:
+            to_block = latest_block_height
 
         txs = []
-        tx_hashes = []
 
-        # TODO: remove this limit when we can fix this problem
+        # TODO: remove this limit when we can fix this performance issue
         # temporary limit for large queries
         tx_limit = 5000
 
-        # if has block_height filter, use this way first
-        if block_height:
-            # get all tx in single block_height
-            tx_hashes = self.session_mgr.db.get_atomicals_block_txs(block_height)
+        # if queries for single block, use that first
+        if from_block == to_block:
+            block_txs = self.session_mgr.db.get_atomicals_block_txs_with_tx_num(from_block)
+            block_txs.sort(key=lambda x: x["tx_num"], reverse=True)
+            for block_tx in block_txs:
+                tx_hash = block_tx["tx_hash"]
+                tx = await self._get_tx_detail(tx_hash, atomical_id, address)
+                if tx:
+                    txs.append(tx)
+                    if len(txs) >= tx_limit:
+                        break
 
-        # no block_height found, use more exhaustive search
         elif address:
             hashX = scripthash_to_hashX(sha256(get_script_from_address(address)))
-            history_data = await self.get_history_limited(hashX, tx_limit, op=None, reverse=True)  # get latest txs
-            history_data = list(reversed(history_data))  # reverse the reverse to get txs in ascending order
-            for history in history_data:
-                tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
-                tx_hashes.append(hash_to_hex_str(tx_hash))
-
             # use address = None to skip filtering check
-            address = None
+            txs = await self.get_txs_from_history_limited(
+                hashX, atomical_id, None, tx_limit, reverse=True
+            )  # get latest txs
 
-        else:
+        elif atomical_id:
             # get all tx filter by id
             hashX = double_sha256(atomical_id)
-            history_data = await self.get_history_limited(hashX, tx_limit, op=None, reverse=True)  # get latest txs
-            history_data = list(reversed(history_data))  # reverse the reverse to get txs in ascending order
-            for history in history_data:
-                tx_hash, _ = self.session_mgr.db.fs_tx_hash(history["tx_num"])
-                tx_hashes.append(hash_to_hex_str(tx_hash))
-
             # use atomical_id = None to skip filtering check
-            atomical_id = None
+            txs = await self.get_txs_from_history_limited(
+                hashX, None, address, tx_limit, reverse=True
+            )  # get latest txs
 
-        # TODO: remove this limit when we can fix this problem
-        # temporary limit for large queries, limit to latest transactions only
-        if len(tx_hashes) > tx_limit:
-            tx_hashes = tx_hashes[-tx_limit:]
-        txs = await asyncio.gather(*[self._get_tx_detail(tx_hash, atomical_id, address) for tx_hash in tx_hashes])
-        # filter None out
-        res_txs = [tx for tx in txs if tx is not None]
+        # query block range sequentially, starting from to_block, until limit is reached
+        else:
+            for block_height in range(to_block, from_block - 1, -1):
+                block_txs = self.session_mgr.db.get_atomicals_block_txs_with_tx_num(block_height)
+                block_txs.sort(key=lambda x: x["tx_num"], reverse=True)
+                for block_tx in block_txs:
+                    tx_hash = block_tx["tx_hash"]
+                    tx = await self._get_tx_detail(tx_hash, atomical_id, address)
+                    if tx:
+                        txs.append(tx)
+                        if len(txs) >= tx_limit:
+                            break
+                if len(block_txs) >= tx_limit:
+                    break
+
+        # reverse to get txs in ascending order (txs is expected to be in descending order at this point)
+        txs = list(reversed(txs))
+        # assumes txs is ALREADY SORTED in ascending order!
+        if len(txs) > tx_limit:
+            txs = txs[-tx_limit:]
 
         return format_response(
             {
-                "list": res_txs,
+                "list": txs,
             }
         )
 
