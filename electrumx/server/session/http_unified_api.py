@@ -653,7 +653,7 @@ class HttpUnifiedAPIHandler(object):
                         txs.append(tx)
                         if len(txs) >= tx_limit:
                             break
-                if len(block_txs) >= tx_limit:
+                if len(txs) >= tx_limit:
                     break
 
         # reverse to get txs in ascending order (txs is expected to be in descending order at this point)
