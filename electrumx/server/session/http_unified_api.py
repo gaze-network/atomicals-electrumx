@@ -605,6 +605,8 @@ class HttpUnifiedAPIHandler(object):
             from_block = latest_block_height
         if to_block == -1:
             to_block = latest_block_height
+        if from_block > to_block:
+            return format_response(None, 400, "fromBlock must be less than or equal to toBlock.")
 
         txs = []
 
