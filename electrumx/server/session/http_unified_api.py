@@ -2,7 +2,7 @@ import asyncio
 import base64
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Tuple
 
 from aiohttp.web import json_response
 from aiohttp.web_urldispatcher import UrlDispatcher
@@ -26,7 +26,7 @@ from electrumx.lib.util_atomicals import (
     location_id_bytes_to_compact,
     parse_protocols_operations_from_witness_array,
 )
-from electrumx.server.db import UTXO
+from electrumx.server.db import UTXO, AtomicalUTXO
 from electrumx.server.history import TXNUM_LEN
 
 if TYPE_CHECKING:
@@ -930,13 +930,15 @@ class HttpUnifiedAPIHandler(object):
         )
 
     async def _utxo_to_formatted(self, utxo: UTXO) -> "dict":
+        # TODO: use data from AtomicalUTXO only when it has atomical_id in it
         tx_id_str = hash_to_hex_str(utxo.tx_hash)
         output_index = utxo.tx_pos
         location = compact_to_location_id_bytes(tx_id_str + "i" + str(output_index))
-        atomical_by_location = self.session_mgr.db.get_atomicals_by_location_extended_info_long_form(location)
-        location_info: dict = atomical_by_location.get("location_info", {})
-        atomical_amount = location_info.get("value", 0)
-        atomical_ids: list = atomical_by_location.get("atomicals", [])
+        atomicals_found_at_location = self.session_mgr.db.get_atomicals_by_location_extended_info_long_form(location)
+        atomical_ids: list = atomicals_found_at_location.get("atomicals", [])
+        atomical_values: dict[bytes, int] = {}
+        for atomical_id in atomicals_found_at_location["atomicals"]:
+            atomical_values[atomical_id] = self.session_mgr.db.get_uxto_atomicals_value(location, atomical_id)
 
         formatted_atomicals = []
         # should be 0 or 1 item
@@ -950,7 +952,7 @@ class HttpUnifiedAPIHandler(object):
             }
             if atomical_type == "FT":
                 atomical_out["ftTicker"] = ticker
-                atomical_out["ftAmount"] = str(atomical_amount)
+                atomical_out["ftAmount"] = str(atomical_values.get(atomical_id, 0))
                 atomical_out["ftDecimals"] = get_decimals()
             formatted_atomicals.append(atomical_out)
         res = {
@@ -990,14 +992,27 @@ class HttpUnifiedAPIHandler(object):
                 return format_response(None, 400, "Invalid ID.")
 
         formatted_results: list[dict] = []
-        utxos: list[UTXO] = []
+        utxos: list[UTXO] | list[AtomicalUTXO] = []
 
         # bypass for latest_block (quicker)
         if block_height == latest_block_height:
             hashX = scripthash_to_hashX(sha256(pk_scriptb))
             utxos = await self.session_mgr.db.all_utxos(hashX)
         else:
-            utxos = await self.session_mgr.db.get_atomical_utxos_at_height_by_pk_script(pk_scriptb, block_height)
+            atomical_utxos = await self.session_mgr.db.get_atomical_utxos_at_height_by_pk_script(
+                pk_scriptb, block_height
+            )
+            # cast AtomicalUTXO to UTXO
+            # TODO: switch to using AtomicalUTXO in _utxo_to_formatted() instead
+            seen_outpoints: set[Tuple[bytes, int]] = set()
+            utxos = []
+            for atomical_utxo in atomical_utxos:
+                if (atomical_utxo.tx_hash, atomical_utxo.tx_pos) in seen_outpoints:
+                    continue
+                seen_outpoints.add((atomical_utxo.tx_hash, atomical_utxo.tx_pos))
+                utxos.append(
+                    UTXO(-1, atomical_utxo.tx_pos, atomical_utxo.tx_hash, atomical_utxo.height, atomical_utxo.sat_value)
+                )
 
         formatted_results = await asyncio.gather(*[self._utxo_to_formatted(utxo) for utxo in utxos])
 
