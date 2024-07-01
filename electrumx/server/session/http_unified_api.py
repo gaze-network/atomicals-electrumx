@@ -181,7 +181,7 @@ class HttpUnifiedAPIHandler(object):
     @error_handler
     async def get_block_height(self, request: "Request") -> "Response":
         block_height = self.session_mgr.db.db_height
-        block_hash, = await self.session_mgr.db.fs_block_hashes(block_height, 1)
+        (block_hash,) = await self.session_mgr.db.fs_block_hashes(block_height, 1)
         block_hash_hex = hash_to_hex_str(block_hash)
         return format_response(
             {
