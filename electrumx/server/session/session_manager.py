@@ -46,6 +46,7 @@ from electrumx.server.mempool import MemPool
 from electrumx.server.peers import PeerManager
 from electrumx.server.session import BAD_REQUEST, DAEMON_ERROR
 from electrumx.server.session.http_session import HttpSession
+from electrumx.server.session.http_unified_api import HttpUnifiedAPIHandler
 from electrumx.server.session.session_base import LocalRPC
 from electrumx.server.session.util import SESSION_PROTOCOL_MAX, non_negative_integer
 from electrumx.version import electrumx_version
@@ -155,10 +156,12 @@ class SessionManager:
                             error_middleware(self),
                             request_middleware(self),
                         ],
-                        client_max_size=self.env.session_max_size_http
+                        client_max_size=self.env.session_max_size_http,
                     )
                     handler = HttpSession(self, self.db, self.mempool, self.peer_mgr, kind)
                     await handler.add_endpoints(app.router, SESSION_PROTOCOL_MAX)
+                    uapi_handler = HttpUnifiedAPIHandler(self)
+                    uapi_handler.mount_routes(app.router)
                     app["rate_limiter"] = rate_limiter
                     runner = web.AppRunner(app)
                     await runner.setup()

@@ -16,8 +16,8 @@ from struct import pack
 from typing import TYPE_CHECKING, Optional, Type, Union
 
 import aiohttp
-from aiorpcx import JSONRPC
 from aiolimiter import AsyncLimiter
+from aiorpcx import JSONRPC
 
 from electrumx.lib.hash import hash_to_hex_str, hex_str_to_hash
 from electrumx.lib.tx import DeserializerDecred
@@ -46,8 +46,10 @@ class ServiceRefusedError(Exception):
     """Internal - when the daemon doesn't provide a JSON response, only an HTTP error, for
     some reason."""
 
+
 class DaemonRateLimitError(Exception):
-    '''Raised when the daemon rate limit is exceeded. The daemon should retry after some time.'''
+    """Raised when the daemon rate limit is exceeded. The daemon should retry after some time."""
+
 
 class Daemon:
     """Handles connections to a daemon at the given URL."""
@@ -145,7 +147,11 @@ class Daemon:
                     if kind == "application/json":
                         resp_body = await resp.json(loads=json_deserialize)
                         # temporary rate limit workaround for quicknode.com
-                        if type(resp_body) == list and any("request limit reached - reduce calls per second or upgrade your account at quicknode.com" in item.get("message", "") for item in resp_body):
+                        if isinstance(resp_body, list) and any(
+                            "request limit reached - reduce calls per second or upgrade your account at quicknode.com"
+                            in item.get("message", "")
+                            for item in resp_body
+                        ):
                             raise DaemonRateLimitError
                         return resp_body
                     text = await resp.text()
@@ -178,7 +184,7 @@ class Daemon:
         retry_count = 0
         while True:
             try:
-                result = await self._send_data(data, len(payload) if type(payload) == list else 1)
+                result = await self._send_data(data, len(payload) if isinstance(payload, list) else 1)
                 result = processor(result)
                 if on_good_message:
                     self.logger.info(on_good_message)
@@ -219,7 +225,7 @@ class Daemon:
             retry = max(min(self.max_retry, retry * 2), self.init_retry)
 
             if retry_count > max_retry_count:
-                raise DaemonError('max retry count exceeded')
+                raise DaemonError("max retry count exceeded")
 
     async def _send_single(self, method, params=None):
         """Send a single request to the daemon."""
@@ -257,7 +263,7 @@ class Daemon:
             if self.limiter:
                 # chunk payload to half the size of the limiter
                 chunk_size = min(self.limiter.max_rate // 4, 1)
-                payload_chunks = [payload[i:i + chunk_size] for i in range(0, len(payload), chunk_size)]
+                payload_chunks = [payload[i : i + chunk_size] for i in range(0, len(payload), chunk_size)]
                 results = await asyncio.gather(*[self._send(chunk, processor) for chunk in payload_chunks])
                 return list(itertools.chain(*results))
 

@@ -300,16 +300,17 @@ def get_address_from_output_script(_bytes: bytes) -> Optional[str]:
 
     return None
 
+
 def get_script_from_address(address: str) -> Optional[bytes]:
     # segwit/taproot
-    if address.startswith(SEGWIT_HRP):
-        witver, witprog = segwit_addr.decode(SEGWIT_HRP, address)
+    if address.startswith(get_segwit_hrp()):
+        witver, witprog = segwit_addr.decode(get_segwit_hrp(), address)
         script = segwit_addr.segwit_scriptpubkey(witver, witprog)
         return script
 
     # pay-to-public-key
-	# Serialized public keys are either 65 bytes (130 hex chars) if
-	# uncompressed/hybrid or 33 bytes (66 hex chars) if compressed.
+    # Serialized public keys are either 65 bytes (130 hex chars) if
+    # uncompressed/hybrid or 33 bytes (66 hex chars) if compressed.
     if len(address) == 130 or len(address) == 66:
         # TODO: not supporting P2PK for now, since get_address_from_output_script() does not support it
         return None

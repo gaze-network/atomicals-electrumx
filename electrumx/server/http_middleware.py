@@ -59,10 +59,12 @@ def cors_middleware(self) -> web_middlewares:
 
 def error_middleware(self) -> web_middlewares:
     async def factory(app: web.Application, handler):
-        async def middleware_handler(request):
+        async def middleware_handler(request: web.Request):
             try:
                 response = await handler(request)
                 if response.status == 404 or response.status == 400:
+                    if "v2/arc20" in request.path:
+                        return response
                     return error_resp(response.status, Exception(response.text))
                 return response
             except web.HTTPException as ex:

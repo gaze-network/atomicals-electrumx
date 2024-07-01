@@ -24,7 +24,7 @@ from cbor2 import CBORDecodeError, dumps, loads
 
 import electrumx
 import electrumx.lib.util as util
-from electrumx.lib.hash import HASHX_LEN, double_sha256, hash_to_hex_str
+from electrumx.lib.hash import HASHX_LEN, double_sha256, hash_to_hex_str, sha256
 from electrumx.lib.merkle import Merkle, MerkleCache
 from electrumx.lib.script import SCRIPTHASH_LEN
 from electrumx.lib.util import (
@@ -67,6 +67,17 @@ class UTXO:
     tx_hash: bytes  # txid
     height: int  # block height
     value: int  # in satoshis
+
+
+@dataclass(order=True)
+class AtomicalUTXO:
+    __slots__ = "tx_pos", "tx_hash", "height", "sat_value", "atomical_value", "pk_script"
+    tx_pos: int  # tx output idx
+    tx_hash: bytes  # txid
+    height: int  # block height
+    sat_value: int  # in satoshis
+    atomical_value: int
+    pk_script: bytes
 
 
 @attr.s(slots=True)
@@ -255,6 +266,30 @@ class DB:
         # Key: b'op' + txnum
         # Value: op in txnum
         # "save the op by txnum"
+        # ---
+        # Key: b'ts' + block_height
+        # Value: unix_timestamp
+        # "maps block height to block timestamp (unix)"
+        # ---
+        # Key: b'mc' + atomical_id
+        # Value: block height
+        # "maps atomical id to block height where mint is completed"
+        # ---
+        # Key: b'mevt' + atomical_id + block_height + location_id
+        # Value: empty
+        # "maps mint event of atomical id to block height and location"
+        # ---
+        # Key: b'ac' + atomical_id_or_script_hash + created_height + location
+        # Value: sat_value
+        # "maps atomical id or script hash to the locations associated with the atomical id or script hash, with created height"
+        # ---
+        # Key: b'as' + atomical_id_or_script_hash + spent_height + location
+        # Value: empty
+        # "maps atomical id or script hash to the locations associated with the atomical id or script hash, with spent height"
+        # ---
+        # Key: b'txidx' + tx_hash
+        # Value: tx index
+        # "maps tx hash to tx index in block"
         #
         #
         #
@@ -1012,9 +1047,11 @@ class DB:
             self.event_hash_version = state.get("event_hash_version", None)
             if self.event_hash_version is not None:
                 if self.event_hash_version != electrumx.gaze_event_hash_version:
-                    raise self.DBError(f"Your event hash version is {self.event_hash_version} but this software "
-                                       f"only supports version {electrumx.gaze_event_hash_version}. Please reset "
-                                       f"your database to block 808080 or lower and restart this software to reindex.")
+                    raise self.DBError(
+                        f"Your event hash version is {self.event_hash_version} but this software "
+                        f"only supports version {electrumx.gaze_event_hash_version}. Please reset "
+                        f"your database to block 808080 or lower and restart this software to reindex."
+                    )
             else:
                 self.event_hash_version = electrumx.gaze_event_hash_version
             # backwards compat
@@ -1320,6 +1357,107 @@ class DB:
     def get_general_data(self, key):
         return self.utxo_db.get(key)
 
+    def get_block_timestamp(self, height: int) -> "int | None":
+        block_timestamp_key = b"ts" + pack_le_uint32(height)
+        block_timestamp_value = self.utxo_db.get(block_timestamp_key)
+        if block_timestamp_value:
+            (block_timestamp,) = unpack_le_uint32(block_timestamp_value)
+            return block_timestamp
+        return None
+
+    def get_tx_index_from_tx_hash(self, tx_hash: bytes) -> "int | None":
+        tx_index_key = b"txidx" + tx_hash
+        tx_index_value = self.utxo_db.get(tx_index_key)
+        if tx_index_value:
+            (tx_index,) = unpack_le_uint32(tx_index_value)
+            return tx_index
+        return None
+
+    def get_mint_completed_at_height(self, atomical_id: bytes) -> "int | None":
+        mint_completed_key = b"mc" + atomical_id
+        mint_completed_value = self.utxo_db.get(mint_completed_key)
+        if mint_completed_value:
+            (height,) = unpack_le_uint32(mint_completed_value)
+            return height
+        return None
+
+    async def get_atomical_mint_count_at_height(self, atomical_id: bytes, target_height: int) -> int:
+        def query():
+            prefix = b"mevt" + atomical_id
+            count = 0
+            for key, _ in self.utxo_db.iterator(prefix=prefix):
+                (height,) = unpack_be_uint32(key[4 + ATOMICAL_ID_LEN : 4 + ATOMICAL_ID_LEN + 4])
+                if height > target_height:
+                    break
+                count += 1
+            return count
+
+        return await run_in_thread(query)
+
+    async def _get_created_atomical_utxos_by_hash(self, hash: bytes, target_height: int) -> list[AtomicalUTXO]:
+        def query():
+            prefix = b"ac" + hash
+            created_atomical_utxos: list[AtomicalUTXO] = []
+            for key, value in self.utxo_db.iterator(prefix=prefix):
+                (created_height,) = unpack_be_uint32(key[2 + TX_HASH_LEN : 2 + TX_HASH_LEN + 4])
+                # stop if we have reached the target height
+                if created_height > target_height:
+                    break
+                location = key[2 + TX_HASH_LEN + 4 :]
+                tx_hash = location[:TX_HASH_LEN]
+                (output_idx,) = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
+                (sat_value,) = unpack_le_uint64(value[:8])
+                (atomical_value,) = unpack_le_uint64(value[8 : 8 + 8])
+                pk_script = value[8 + 8 :]
+                created_atomical_utxos.append(
+                    AtomicalUTXO(output_idx, tx_hash, created_height, sat_value, atomical_value, pk_script)
+                )
+            return created_atomical_utxos
+
+        # run in thread to avoid blocking the main thread
+        return await run_in_thread(query)
+
+    async def _get_spent_atomical_utxos_by_hash(self, hash: bytes, target_height: int) -> list[Tuple[bytes, int]]:
+        def query():
+            prefix = b"as" + hash
+            spent_atomical_utxos: list[Tuple[bytes, int]] = []
+            for key, _ in self.utxo_db.iterator(prefix=prefix):
+                (spent_height,) = unpack_be_uint32(key[2 + TX_HASH_LEN : 2 + TX_HASH_LEN + 4])
+                # stop if we have reached the target height
+                if spent_height > target_height:
+                    break
+                location = key[2 + TX_HASH_LEN + 4 :]
+                tx_hash = location[:TX_HASH_LEN]
+                (output_idx,) = unpack_le_uint32(location[TX_HASH_LEN : TX_HASH_LEN + 4])
+                spent_atomical_utxos.append(
+                    (tx_hash, output_idx)
+                )  # spent height, sat value, and atomical value are not needed
+            return spent_atomical_utxos
+
+        # run in thread to avoid blocking the main thread
+        return await run_in_thread(query)
+
+    async def _get_atomical_utxos_at_height_by_hash(self, hash: bytes, target_height: int) -> list[AtomicalUTXO]:
+        created_utxos = await self._get_created_atomical_utxos_by_hash(hash, target_height)
+        spent_location_list = await self._get_spent_atomical_utxos_by_hash(hash, target_height)
+        spent_locations: set[Tuple[bytes, int]] = set()
+        for tx_hash, output_idx in spent_location_list:
+            spent_locations.add((tx_hash, output_idx))
+
+        return [e for e in created_utxos if (e.tx_hash, e.tx_pos) not in spent_locations]
+
+    async def get_atomical_utxos_at_height_by_atomical_id(
+        self, atomical_id: bytes, target_height: int
+    ) -> list[AtomicalUTXO]:
+        atomical_id_hash = sha256(atomical_id)
+        return await self._get_atomical_utxos_at_height_by_hash(atomical_id_hash, target_height)
+
+    async def get_atomical_utxos_at_height_by_pk_script(
+        self, pk_script: bytes, target_height: int
+    ) -> list[AtomicalUTXO]:
+        pk_script_hash = sha256(pk_script)
+        return await self._get_atomical_utxos_at_height_by_hash(pk_script_hash, target_height)
+
     # Get all of the atomicals that passed through the location
     # Never deleted, kept for historical purposes.
     def get_atomicals_by_location(self, location):
@@ -1420,6 +1558,17 @@ class DB:
             if key_height != height:
                 break
             txs_list.append(hash_to_hex_str(block_txs_prefix_value))
+        return txs_list
+
+    def get_atomicals_block_txs_with_tx_num(self, height) -> list[dict]:
+        block_txs_prefix = b"th" + pack_le_uint32(height)
+        txs_list = []
+        for block_txs_prefix_key, block_txs_prefix_value in self.utxo_db.iterator(prefix=block_txs_prefix):
+            (key_height,) = unpack_le_uint32(block_txs_prefix_key[2:6])
+            (tx_num,) = unpack_le_uint64(block_txs_prefix_key[6:14])
+            if key_height != height:
+                break
+            txs_list.append({"tx_hash": hash_to_hex_str(block_txs_prefix_value), "tx_num": tx_num})
         return txs_list
 
     def get_active_supply(self, atomical_id):
