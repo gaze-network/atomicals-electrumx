@@ -275,7 +275,6 @@ class HttpUnifiedAPIHandler(object):
         for atomical_id, amount in balances.items():
             atomical = atomicals.get(atomical_id)
             if atomical:
-                atomical: dict = await self.session_mgr.db.populate_extended_atomical_holder_info(atomical_id, atomical)
                 ticker = atomical.get("$ticker", "")
                 balance = {
                     "amount": str(amount),
