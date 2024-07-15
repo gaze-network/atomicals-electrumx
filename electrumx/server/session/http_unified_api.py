@@ -608,7 +608,8 @@ class HttpUnifiedAPIHandler(object):
                 # append only txs with atomical operation
                 if not op_data:
                     continue
-                tx = await self._get_tx_detail(tx_hash, f_atomical_id, f_address)
+                tx_hash_str = hash_to_hex_str(tx_hash)
+                tx = await self._get_tx_detail(tx_hash_str, f_atomical_id, f_address)
                 if tx:
                     txs.append(tx)
 
