@@ -39,6 +39,20 @@ supported_ops = ["dft", "mint-dft", "mint-ft", "split", "transfer", "burn", "cus
 MAX_UINT64 = 9223372036854775807
 
 
+class MAX_LIMIT:
+    get_arc20_balances = 5000
+    get_arc20_balances_batch_queries = 10
+    get_arc20_transactions = 3000
+    get_arc20_holders = 1000
+    get_arc20_utxos = 3000 # large limit since pagination does not help performance
+
+class DEFAULT_LIMIT:
+    get_arc20_balances = 100
+    get_arc20_transactions = 100
+    get_arc20_holders = 100
+    get_arc20_utxos = 100
+
+
 class JSONBytesEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, bytes):
@@ -85,6 +99,11 @@ class BalanceQuery:
     address: str
     atomical_id: "bytes | None"
     block_height: "int | None"
+    limit: "int"
+    offset: "int"
+
+class BadRequestException(Exception):
+    pass
 
 
 class HttpUnifiedAPIHandler(object):
@@ -99,6 +118,8 @@ class HttpUnifiedAPIHandler(object):
         async def wrapper(self: "HttpUnifiedAPIHandler", *args, **kwargs):
             try:
                 return await func(self, *args, **kwargs)
+            except BadRequestException as e:
+                return format_response(None, 400, str(e))
             except Exception as e:
                 self.logger.exception(f"Request has failed with exception: {repr(e)}")
                 return format_response(None, 500, "Internal Server Error")
@@ -155,21 +176,36 @@ class HttpUnifiedAPIHandler(object):
         return addr
 
     # check if block height is valid
-    def _parse_block_height(self, block_height_str: str) -> int | None:
+    def _parse_integer_string(self, input: str | int | None) -> int | None:
         # empty string
-        if not block_height_str:
+        if not input:
             return None
+        if isinstance(input, int):
+            return input
         # some character is not 0-9
-        if not block_height_str.isnumeric():
+        if not input.isnumeric():
             return None
-        block_height = int(block_height_str)
-        return block_height
+        value = int(input)
+        return value
+
+    def _parse_limit_offset(
+        self, limit_input: str | int | None, offset_input: str | int | None, default_limit: int, max_limit: int
+    ) -> Tuple[int, int]:
+        limit = self._parse_integer_string(limit_input)
+        offset = self._parse_integer_string(offset_input)
+        if limit is None:
+            limit = default_limit
+        if offset is None:
+            offset = 0
+        if limit > max_limit:
+            raise BadRequestException(f"'limit' cannot exceed {max_limit}")
+        return limit, offset
 
     # check if block range is valid (-1 means "latest block")
     def _parse_block_height_for_range(self, block_height_str: str) -> int | None:
         if block_height_str == "-1":
             return -1
-        return self._parse_block_height(block_height_str)
+        return self._parse_integer_string(block_height_str)
 
     def _block_height_to_unix_timestamp(self, block_height: int) -> int:
         db_block_ts = self.session_mgr.db.get_block_timestamp(block_height)
@@ -230,7 +266,9 @@ class HttpUnifiedAPIHandler(object):
         conf = [{"tx_hash": hash_to_hex_str(tx_hash), "height": height} for tx_hash, height in history]
         return conf
 
-    async def _get_populated_arc20_balances(self, address: str, atomical_id: "bytes | None", block_height: int):
+    async def _get_populated_arc20_balances(
+        self, address: str, atomical_id: "bytes | None", block_height: int, limit: int = None, offset: int = 0
+    ):
         pk_scriptb = get_script_from_address(address)
 
         balances: "dict[bytes, int]" = {}  # atomical_id -> amount (int)
@@ -264,15 +302,20 @@ class HttpUnifiedAPIHandler(object):
 
         # clear empty balances and filter by atomical_id
         balances = {k: v for k, v in balances.items() if v != 0 and (not atomical_id or k == atomical_id)}
+
+        balances_list = list(balances.items())
+        balances_list.sort(key=lambda x: (x[1], x[0]), reverse=True)  # sort by amount and atomical_id desc
+        if limit is not None:
+            balances_list = balances_list[offset : offset + limit]
         # populate atomical objects
-        atomical_ids = list(balances.keys())
+        atomical_ids = [atomical_id for atomical_id, _ in balances_list]
         atomicals_list = await asyncio.gather(*[self._get_atomical(atomical_id) for atomical_id in atomical_ids])
         atomicals: dict[bytes, dict] = {
             atomical_id: atomical for atomical_id, atomical in zip(atomical_ids, atomicals_list, strict=True)
         }
 
         populated_balances: "list[dict]" = []  # atomical_id -> { "amount": int, "ticker": str | None }
-        for atomical_id, amount in balances.items():
+        for atomical_id, amount in balances_list:
             atomical = atomicals.get(atomical_id)
             if atomical:
                 ticker = atomical.get("$ticker", "")
@@ -301,7 +344,7 @@ class HttpUnifiedAPIHandler(object):
         q_block_height = request.query.get("blockHeight")
         block_height = latest_block_height
         if q_block_height is not None:
-            block_height = self._parse_block_height(q_block_height)
+            block_height = self._parse_integer_string(q_block_height)
             if block_height is None:
                 return format_response(None, 400, "Invalid block height.")
 
@@ -313,7 +356,12 @@ class HttpUnifiedAPIHandler(object):
             if not atomical_id:
                 return format_response(None, 400, "Invalid ID.")
 
-        populated_balances = await self._get_populated_arc20_balances(address, atomical_id, block_height)
+    
+        limit, offset = self._parse_limit_offset(
+            request.query.get("limit"), request.query.get("offset"), DEFAULT_LIMIT.get_arc20_balances, MAX_LIMIT.get_arc20_balances
+        )
+
+        populated_balances = await self._get_populated_arc20_balances(address, atomical_id, block_height, limit, offset)
         return format_response({"blockHeight": block_height, "list": populated_balances})
 
     @error_handler
@@ -323,6 +371,8 @@ class HttpUnifiedAPIHandler(object):
         latest_block_height = self.session_mgr.db.db_height
 
         raw_queries: "list[dict]" = body.get("queries", [])
+        if len(raw_queries) > MAX_LIMIT.get_arc20_balances_batch_queries:
+            return format_response(None, 400, f"cannot exceed {MAX_LIMIT.get_arc20_balances_batch_queries} queries.")
         for idx, raw_query in enumerate(raw_queries):
             # parse wallet
             wallet = raw_query.get("wallet", "")
@@ -337,7 +387,7 @@ class HttpUnifiedAPIHandler(object):
             q_block_height = raw_query.get("blockHeight")
             block_height = latest_block_height
             if q_block_height is not None:
-                block_height = self._parse_block_height(str(q_block_height))
+                block_height = self._parse_integer_string(str(q_block_height))
                 if block_height is None:
                     return format_response(None, 400, f"query index {idx}: invalid block height.")
 
@@ -349,12 +399,18 @@ class HttpUnifiedAPIHandler(object):
                 if not atomical_id:
                     return format_response(None, 400, f"query index {idx}: invalid ID.")
 
+            limit, offset = self._parse_limit_offset(
+                raw_query.get("limit"), raw_query.get("offset"), DEFAULT_LIMIT.get_arc20_balances, MAX_LIMIT.get_arc20_balances
+            )
+
             # append to list
-            queries.append(BalanceQuery(address, atomical_id, block_height))
+            queries.append(BalanceQuery(address, atomical_id, block_height, limit, offset))
 
         results = await asyncio.gather(
             *[
-                self._get_populated_arc20_balances(query.address, query.atomical_id, query.block_height)
+                self._get_populated_arc20_balances(
+                    query.address, query.atomical_id, query.block_height, query.limit, query.offset
+                )
                 for query in queries
             ]
         )
@@ -600,19 +656,25 @@ class HttpUnifiedAPIHandler(object):
             if not atomical_id:
                 return format_response(None, 400, "Invalid ID.")
 
+        limit, offset = self._parse_limit_offset(
+            request.query.get("limit"), request.query.get("offset"), DEFAULT_LIMIT.get_arc20_transactions, MAX_LIMIT.get_arc20_transactions
+        )
+
         latest_block_height = self.session_mgr.db.db_height
         if from_block == -1:
             from_block = latest_block_height
         if to_block == -1:
             to_block = latest_block_height
         if from_block > to_block:
-            return format_response(None, 400, "fromBlock must be less than or equal to toBlock.")
+            return format_response(None, 400, "fromBlock must be <= toBlock.")
 
         txs = []
 
         # TODO: remove this limit when we can fix this performance issue
         # temporary limit for large queries
-        tx_limit = 5000
+        max_offset = 5000
+        if offset > max_offset:
+            return format_response(None, 400, f"offset must be <= {max_offset}.")
 
         # if queries for single block, use that first
         if from_block == to_block:
@@ -623,14 +685,14 @@ class HttpUnifiedAPIHandler(object):
                 tx = await self._get_tx_detail(tx_hash, atomical_id, address)
                 if tx:
                     txs.append(tx)
-                    if len(txs) >= tx_limit:
+                    if len(txs) >= limit + offset:
                         break
 
         elif address:
             hashX = scripthash_to_hashX(sha256(get_script_from_address(address)))
             # use address = None to skip filtering check
             txs = await self.get_txs_from_history_limited(
-                hashX, atomical_id, None, tx_limit, reverse=True
+                hashX, atomical_id, None, limit + offset, reverse=True
             )  # get latest txs
 
         elif atomical_id:
@@ -638,7 +700,7 @@ class HttpUnifiedAPIHandler(object):
             hashX = double_sha256(atomical_id)
             # use atomical_id = None to skip filtering check
             txs = await self.get_txs_from_history_limited(
-                hashX, None, address, tx_limit, reverse=True
+                hashX, None, address, limit + offset, reverse=True
             )  # get latest txs
 
         # query block range sequentially, starting from to_block, until limit is reached
@@ -651,16 +713,15 @@ class HttpUnifiedAPIHandler(object):
                     tx = await self._get_tx_detail(tx_hash, atomical_id, address)
                     if tx:
                         txs.append(tx)
-                        if len(txs) >= tx_limit:
+                        if len(txs) >= limit + offset:
                             break
-                if len(txs) >= tx_limit:
+                if len(txs) >= limit + offset:
                     break
 
         # reverse to get txs in ascending order (txs is expected to be in descending order at this point)
         txs = list(reversed(txs))
         # assumes txs is ALREADY SORTED in ascending order!
-        if len(txs) > tx_limit:
-            txs = txs[-tx_limit:]
+        txs = txs[offset : offset + limit]
 
         return format_response(
             {
@@ -701,9 +762,13 @@ class HttpUnifiedAPIHandler(object):
         q_block_height = request.query.get("blockHeight")
         block_height = latest_block_height
         if q_block_height is not None:
-            block_height = self._parse_block_height(q_block_height)
+            block_height = self._parse_integer_string(q_block_height)
             if block_height is None:
                 return format_response(None, 400, "Invalid block height.")
+
+        limit, offset = self._parse_limit_offset(
+            request.query.get("limit"), request.query.get("offset"), DEFAULT_LIMIT.get_arc20_holders, MAX_LIMIT.get_arc20_holders
+        )
 
         # base data
         atomical = await self._get_atomical(atomical_id)
@@ -717,7 +782,6 @@ class HttpUnifiedAPIHandler(object):
         mint_info: dict = atomical.get("mint_info", {})
         mint_info_args: dict = mint_info.get("args", {})
 
-        formatted_results = []
         max_supply = 0
         mint_amount = 0
         minted_amount = 0
@@ -745,37 +809,32 @@ class HttpUnifiedAPIHandler(object):
         else:
             raise Exception("unreachable code: invalid subtype")
 
+        holders: list[Tuple[bytes, int]] = []
         # support only atomical FT
         if atomical_type == "FT":
             if block_height == latest_block_height:
                 atomical: dict = await self.session_mgr.db.populate_extended_atomical_holder_info(atomical_id, atomical)
-                for holder in atomical.get("holders", []):
-                    amount = holder.get("holding", 0)
-                    address = get_address_from_output_script(bytes.fromhex(holder["script"]))
-                    formatted_results.append(
-                        {
-                            "address": address if address else "",
-                            "pkScript": holder["script"],
-                            "amount": str(amount),
-                            "percent": amount / max_supply,
-                        }
-                    )
+                holders = [(bytes.fromhex(holder["script"]), holder.get("holding", 0)) for holder in atomical.get("holders", [])]
             else:
                 # get historical data
                 data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
-                for pk_scriptb, amount in data.get("holders", {}).items():
-                    address = get_address_from_output_script(pk_scriptb)
-                    formatted_results.append(
-                        {
-                            "address": address if address else "",
-                            "pkScript": pk_scriptb.hex(),
-                            "amount": str(amount),
-                            "percent": amount / max_supply,
-                        }
-                    )
+                holders = [(pk_script, amount) for pk_script, amount in data["holders"].items()]
 
         # sort by holding desc
-        formatted_results.sort(key=lambda x: (int(x["amount"]), x["address"]), reverse=True)
+        holders.sort(key=lambda x: (x[1], x[0]), reverse=True)
+        holders = holders[offset : offset + limit]
+
+        formatted_results = []
+        for pk_scriptb, amount in holders:
+            address = get_address_from_output_script(pk_scriptb)
+            formatted_results.append(
+                {
+                    "address": address if address else "",
+                    "pkScript": pk_scriptb.hex(),
+                    "amount": str(amount),
+                    "percent": amount / max_supply,
+                }
+            )
 
         return format_response(
             {
@@ -802,7 +861,7 @@ class HttpUnifiedAPIHandler(object):
         q_block_height = request.query.get("blockHeight")
         block_height = latest_block_height
         if q_block_height is not None:
-            block_height = self._parse_block_height(q_block_height)
+            block_height = self._parse_integer_string(q_block_height)
             if block_height is None:
                 return format_response(None, 400, "Invalid block height.")
 
@@ -979,7 +1038,7 @@ class HttpUnifiedAPIHandler(object):
         q_block_height = request.query.get("blockHeight")
         block_height = latest_block_height
         if q_block_height is not None:
-            block_height = self._parse_block_height(q_block_height)
+            block_height = self._parse_integer_string(q_block_height)
             if block_height is None:
                 return format_response(None, 400, "Invalid block height.")
 
@@ -990,6 +1049,10 @@ class HttpUnifiedAPIHandler(object):
             atomical_id = self._parse_atomical_id(id)
             if not atomical_id:
                 return format_response(None, 400, "Invalid ID.")
+        
+        limit, offset = self._parse_limit_offset(
+            request.query.get("limit"), request.query.get("offset"), DEFAULT_LIMIT.get_arc20_utxos, MAX_LIMIT.get_arc20_utxos
+        )
 
         formatted_results: list[dict] = []
         utxos: list[UTXO] | list[AtomicalUTXO] = []
@@ -1029,7 +1092,8 @@ class HttpUnifiedAPIHandler(object):
                 found = atomical_id_str in [a["atomicalId"] for a in atomical_list]
             if found:
                 filtered_formatted.append(e)
-
+        
+        filtered_formatted = filtered_formatted[offset : offset + limit]
         return format_response(
             {
                 "blockHeight": block_height,
