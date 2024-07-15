@@ -579,8 +579,8 @@ class HttpUnifiedAPIHandler(object):
     async def get_txs_from_history_limited(
         self,
         hashX,
-        fromBlock: int,
-        toBlock: int,
+        from_block: int,
+        to_block: int,
         f_atomical_id: bytes | None,
         f_address: str | None,
         limit=None,
@@ -594,7 +594,7 @@ class HttpUnifiedAPIHandler(object):
                     (tx_num,) = util.unpack_le_uint64(tx_numb + txnum_padding)
                     tx_hash, height = self.session_mgr.db.fs_tx_hash(tx_num)
                     # skip txs outside block range
-                    if not (fromBlock <= height <= toBlock):
+                    if not (from_block <= height <= to_block):
                         continue
 
                     # check tx has atomical operation, so we don't waste time on daemon for non-atomical txs
@@ -692,7 +692,7 @@ class HttpUnifiedAPIHandler(object):
             hashX = scripthash_to_hashX(sha256(get_script_from_address(address)))
             # use address = None to skip filtering check
             txs = await self.get_txs_from_history_limited(
-                hashX, atomical_id, None, limit + offset, reverse=True
+                hashX, from_block, to_block, atomical_id, None, limit + offset, reverse=True
             )  # get latest txs
 
         elif atomical_id:
@@ -700,7 +700,7 @@ class HttpUnifiedAPIHandler(object):
             hashX = double_sha256(atomical_id)
             # use atomical_id = None to skip filtering check
             txs = await self.get_txs_from_history_limited(
-                hashX, None, address, limit + offset, reverse=True
+                hashX, from_block, to_block, None, address, limit + offset, reverse=True
             )  # get latest txs
 
         # query block range sequentially, starting from to_block, until limit is reached
