@@ -670,9 +670,9 @@ class HttpUnifiedAPIHandler(object):
 
         # TODO: remove this limit when we can fix this performance issue
         # temporary limit for large queries
-        max_offset = 5000
-        if offset > max_offset:
-            return format_response(None, 400, f"offset must be <= {max_offset}.")
+        max_limit_offset = 5000
+        if limit + offset > max_limit_offset:
+            return format_response(None, 400, f"limit + offset must be <= {max_limit_offset}.")
 
         # if queries for single block, use that first
         if from_block == to_block:
