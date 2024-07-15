@@ -584,7 +584,7 @@ class HttpUnifiedAPIHandler(object):
         f_atomical_id: bytes | None,
         f_address: str | None,
         limit=None,
-        reverse=True,
+        reverse=True, # set to true for descending order
     ) -> list:
         txs = []
         txnum_padding = bytes(8 - TXNUM_LEN)
@@ -716,9 +716,7 @@ class HttpUnifiedAPIHandler(object):
                 if len(txs) >= limit + offset:
                     break
 
-        # reverse to get txs in ascending order (txs is expected to be in descending order at this point)
-        txs = list(reversed(txs))
-        # assumes txs is ALREADY SORTED in ascending order!
+        # assumes txs is ALREADY SORTED in descending order!
         txs = txs[offset : offset + limit]
 
         return format_response(
