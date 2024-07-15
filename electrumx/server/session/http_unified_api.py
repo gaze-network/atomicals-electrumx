@@ -585,44 +585,41 @@ class HttpUnifiedAPIHandler(object):
         f_address: str | None,
         limit=None,
         reverse=True,
-    ):
-        def query():
-            txs = []
-            txnum_padding = bytes(8 - TXNUM_LEN)
-            for _, hist in self.session_mgr.db.history.db.iterator(prefix=hashX, reverse=reverse):
-                for tx_numb in util.chunks(hist, TXNUM_LEN):
-                    (tx_num,) = util.unpack_le_uint64(tx_numb + txnum_padding)
-                    tx_hash, height = self.session_mgr.db.fs_tx_hash(tx_num)
-                    # skip txs outside block range
-                    if not (from_block <= height <= to_block):
-                        continue
+    ) -> list:
+        txs = []
+        txnum_padding = bytes(8 - TXNUM_LEN)
+        for _, hist in self.session_mgr.db.history.db.iterator(prefix=hashX, reverse=reverse):
+            for tx_numb in util.chunks(hist, TXNUM_LEN):
+                (tx_num,) = util.unpack_le_uint64(tx_numb + txnum_padding)
+                tx_hash, height = self.session_mgr.db.fs_tx_hash(tx_num)
+                # skip txs outside block range
+                if not (from_block <= height <= to_block):
+                    continue
 
-                    # check tx has atomical operation, so we don't waste time on daemon for non-atomical txs
-                    op_data = self.session_mgr._tx_num_op_cache.get(tx_num)
-                    if not op_data:
-                        op_prefix_key = b"op" + util.pack_le_uint64(tx_num)
-                        tx_op = self.session_mgr.db.utxo_db.get(op_prefix_key)
-                        if tx_op:
-                            (op_data,) = util.unpack_le_uint32(tx_op)
-                            self.session_mgr._tx_num_op_cache[tx_num] = op_data
+                # check tx has atomical operation, so we don't waste time on daemon for non-atomical txs
+                op_data = self.session_mgr._tx_num_op_cache.get(tx_num)
+                if not op_data:
+                    op_prefix_key = b"op" + util.pack_le_uint64(tx_num)
+                    tx_op = self.session_mgr.db.utxo_db.get(op_prefix_key)
+                    if tx_op:
+                        (op_data,) = util.unpack_le_uint32(tx_op)
+                        self.session_mgr._tx_num_op_cache[tx_num] = op_data
 
-                    # append only txs with atomical operation
-                    if not op_data:
-                        continue
-                    tx = self._get_tx_detail(tx_hash, f_atomical_id, f_address)
-                    if tx:
-                        txs.append(tx)
+                # append only txs with atomical operation
+                if not op_data:
+                    continue
+                tx = await self._get_tx_detail(tx_hash, f_atomical_id, f_address)
+                if tx:
+                    txs.append(tx)
 
-                # only break when all tx_nums in hist are processed, since tx_nums are always sorted in ascending order and we need all of them if reverse=True
-                if limit is not None and len(txs) >= limit:
-                    break
-            if reverse:
-                txs.sort(key=lambda x: (x["blockHeight"], x["index"]), reverse=reverse)
-            if limit is not None:
-                txs = txs[:limit]
-            return txs
-
-        return await run_in_thread(query)
+            # only break when all tx_nums in hist are processed, since tx_nums are always sorted in ascending order and we need all of them if reverse=True
+            if limit is not None and len(txs) >= limit:
+                break
+        if reverse:
+            txs.sort(key=lambda x: (x["blockHeight"], x["index"]), reverse=reverse)
+        if limit is not None:
+            txs = txs[:limit]
+        return txs
 
     @error_handler
     async def get_arc20_transactions(self, request: "Request") -> "Response":
