@@ -44,7 +44,8 @@ class MAX_LIMIT:
     get_arc20_balances_batch_queries = 10
     get_arc20_transactions = 3000
     get_arc20_holders = 1000
-    get_arc20_utxos = 3000 # large limit since pagination does not help performance
+    get_arc20_utxos = 3000  # large limit since pagination does not help performance
+
 
 class DEFAULT_LIMIT:
     get_arc20_balances = 100
@@ -101,6 +102,7 @@ class BalanceQuery:
     block_height: "int | None"
     limit: "int"
     offset: "int"
+
 
 class BadRequestException(Exception):
     pass
@@ -356,9 +358,11 @@ class HttpUnifiedAPIHandler(object):
             if not atomical_id:
                 return format_response(None, 400, "Invalid ID.")
 
-    
         limit, offset = self._parse_limit_offset(
-            request.query.get("limit"), request.query.get("offset"), DEFAULT_LIMIT.get_arc20_balances, MAX_LIMIT.get_arc20_balances
+            request.query.get("limit"),
+            request.query.get("offset"),
+            DEFAULT_LIMIT.get_arc20_balances,
+            MAX_LIMIT.get_arc20_balances,
         )
 
         populated_balances = await self._get_populated_arc20_balances(address, atomical_id, block_height, limit, offset)
@@ -400,7 +404,10 @@ class HttpUnifiedAPIHandler(object):
                     return format_response(None, 400, f"query index {idx}: invalid ID.")
 
             limit, offset = self._parse_limit_offset(
-                raw_query.get("limit"), raw_query.get("offset"), DEFAULT_LIMIT.get_arc20_balances, MAX_LIMIT.get_arc20_balances
+                raw_query.get("limit"),
+                raw_query.get("offset"),
+                DEFAULT_LIMIT.get_arc20_balances,
+                MAX_LIMIT.get_arc20_balances,
             )
 
             # append to list
@@ -584,7 +591,7 @@ class HttpUnifiedAPIHandler(object):
         f_atomical_id: bytes | None,
         f_address: str | None,
         limit=None,
-        reverse=True, # set to true for descending order
+        reverse=True,  # set to true for descending order
     ) -> list:
         txs = []
         txnum_padding = bytes(8 - TXNUM_LEN)
@@ -655,7 +662,10 @@ class HttpUnifiedAPIHandler(object):
                 return format_response(None, 400, "Invalid ID.")
 
         limit, offset = self._parse_limit_offset(
-            request.query.get("limit"), request.query.get("offset"), DEFAULT_LIMIT.get_arc20_transactions, MAX_LIMIT.get_arc20_transactions
+            request.query.get("limit"),
+            request.query.get("offset"),
+            DEFAULT_LIMIT.get_arc20_transactions,
+            MAX_LIMIT.get_arc20_transactions,
         )
 
         latest_block_height = self.session_mgr.db.db_height
@@ -763,7 +773,10 @@ class HttpUnifiedAPIHandler(object):
                 return format_response(None, 400, "Invalid block height.")
 
         limit, offset = self._parse_limit_offset(
-            request.query.get("limit"), request.query.get("offset"), DEFAULT_LIMIT.get_arc20_holders, MAX_LIMIT.get_arc20_holders
+            request.query.get("limit"),
+            request.query.get("offset"),
+            DEFAULT_LIMIT.get_arc20_holders,
+            MAX_LIMIT.get_arc20_holders,
         )
 
         # base data
@@ -810,7 +823,10 @@ class HttpUnifiedAPIHandler(object):
         if atomical_type == "FT":
             if block_height == latest_block_height:
                 atomical: dict = await self.session_mgr.db.populate_extended_atomical_holder_info(atomical_id, atomical)
-                holders = [(bytes.fromhex(holder["script"]), holder.get("holding", 0)) for holder in atomical.get("holders", [])]
+                holders = [
+                    (bytes.fromhex(holder["script"]), holder.get("holding", 0))
+                    for holder in atomical.get("holders", [])
+                ]
             else:
                 # get historical data
                 data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
@@ -1045,9 +1061,12 @@ class HttpUnifiedAPIHandler(object):
             atomical_id = self._parse_atomical_id(id)
             if not atomical_id:
                 return format_response(None, 400, "Invalid ID.")
-        
+
         limit, offset = self._parse_limit_offset(
-            request.query.get("limit"), request.query.get("offset"), DEFAULT_LIMIT.get_arc20_utxos, MAX_LIMIT.get_arc20_utxos
+            request.query.get("limit"),
+            request.query.get("offset"),
+            DEFAULT_LIMIT.get_arc20_utxos,
+            MAX_LIMIT.get_arc20_utxos,
         )
 
         formatted_results: list[dict] = []
@@ -1088,7 +1107,7 @@ class HttpUnifiedAPIHandler(object):
                 found = atomical_id_str in [a["atomicalId"] for a in atomical_list]
             if found:
                 filtered_formatted.append(e)
-        
+
         filtered_formatted = filtered_formatted[offset : offset + limit]
         return format_response(
             {
