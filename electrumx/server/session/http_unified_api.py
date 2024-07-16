@@ -1013,7 +1013,7 @@ class HttpUnifiedAPIHandler(object):
 
             atomical_type = atomical.get("type", "")
             if atomical_type == "NFT":
-                return format_response(None, 400, "NFT is not supported.")
+                continue
 
             subtype = atomical.get("subtype", "")
             mint_mode = atomical.get("$mint_mode", "")
