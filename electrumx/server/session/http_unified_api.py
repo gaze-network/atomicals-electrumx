@@ -1120,7 +1120,7 @@ class HttpUnifiedAPIHandler(object):
                 },
             })
         return format_response({
-            list: infos
+            "list": infos,
         })
 
     async def _utxo_to_formatted(self, utxo: UTXO) -> "dict":
