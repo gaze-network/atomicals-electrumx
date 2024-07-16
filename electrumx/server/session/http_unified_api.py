@@ -1012,10 +1012,10 @@ class HttpUnifiedAPIHandler(object):
             MAX_LIMIT.get_arc20_token_list,
         )
 
-        block_height = self.session_mgr.db.db_height
 
         infos = []
-        atomical_ids = await self.session_mgr.db.get_atomicals_list(limit,offset,asc=True)
+        atomical_ids = await self._get_atomicals_ft_list(limit,offset,asc=True)
+        block_height = self.session_mgr.db.db_height
         for atomical_id in atomical_ids:
             # get data
             atomical: dict = await self._get_atomical(atomical_id)
@@ -1131,6 +1131,12 @@ class HttpUnifiedAPIHandler(object):
         return format_response({
             "list": infos,
         })
+    async def _get_atomicals_ft_list(self, limit, offset, asc=True) -> list:
+        atomical_ids = await self.session_mgr.db.get_atomicals_list(limit, offset, asc)
+        # TODO:
+        # - implement logic from `electrumx/server/db.py.get_atomicals_list()`
+        # - each iteration should call `self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id, True) to check type is FT or NFT`
+        return atomical_ids
 
     async def _utxo_to_formatted(self, utxo: UTXO) -> "dict":
         # TODO: use data from AtomicalUTXO only when it has atomical_id in it
