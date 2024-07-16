@@ -45,6 +45,7 @@ class MAX_LIMIT:
     get_arc20_transactions = 3000
     get_arc20_holders = 1000
     get_arc20_utxos = 3000  # large limit since pagination does not help performance
+    get_arc20_token_list = 1000
 
 
 class DEFAULT_LIMIT:
@@ -52,6 +53,7 @@ class DEFAULT_LIMIT:
     get_arc20_transactions = 100
     get_arc20_holders = 100
     get_arc20_utxos = 100
+    get_arc20_token_list = 100
 
 
 class JSONBytesEncoder(json.JSONEncoder):
@@ -1003,10 +1005,17 @@ class HttpUnifiedAPIHandler(object):
 
     @error_handler
     async def get_arc20_token_list(self, request: "Request") -> "Response":
+        limit, offset = self._parse_limit_offset(
+            request.query.get("limit"),
+            request.query.get("offset"),
+            DEFAULT_LIMIT.get_arc20_token_list,
+            MAX_LIMIT.get_arc20_token_list,
+        )
+
         block_height = self.session_mgr.db.db_height
 
         infos = []
-        atomical_ids = await self.session_mgr.db.get_atomicals_list(10,0,asc=True)
+        atomical_ids = await self.session_mgr.db.get_atomicals_list(limit,offset,asc=True)
         for atomical_id in atomical_ids:
             # get data
             atomical: dict = await self._get_atomical(atomical_id)
