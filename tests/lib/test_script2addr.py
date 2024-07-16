@@ -1,6 +1,9 @@
 import pytest
 
-from electrumx.lib.script2addr import get_address_from_output_script, get_script_from_address
+from electrumx.lib.script2addr import (
+    get_address_from_output_script,
+    get_script_from_address,
+)
 
 
 def test_get_address_from_output_script():
@@ -49,26 +52,38 @@ def test_get_address_from_output_script():
     assert None == addr_from_script("200289e14468d94537493c62e2168318b568912dec0fb95609afd56f2527c2751cac")
     assert None == addr_from_script("210589e14468d94537493c62e2168318b568912dec0fb95609afd56f2527c2751c8bac")
 
+
 def test_get_script_from_address():
-    script_hex_from_addr = lambda address: get_script_from_address(address).hex()
+    def script_hex_from_addr(address: str) -> str:
+        return get_script_from_address(address).hex()
 
     # bech32/bech32m native segwit
     # test vectors from BIP-0173/BIP-0350
     assert "0014751e76e8199196d454941c45d1b3a323f1433bd6" == script_hex_from_addr(
-        "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4")
-    assert "5128751e76e8199196d454941c45d1b3a323f1433bd6751e76e8199196d454941c45d1b3a323f1433bd6" == script_hex_from_addr(
-        "bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7kt5nd6y")
+        "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+    )
+    assert (
+        "5128751e76e8199196d454941c45d1b3a323f1433bd6751e76e8199196d454941c45d1b3a323f1433bd6"
+        == script_hex_from_addr("bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7kt5nd6y")
+    )
     assert "6002751e" == script_hex_from_addr("bc1sw50qgdz25j")
     assert "5210751e76e8199196d454941c45d1b3a323" == script_hex_from_addr("bc1zw508d6qejxtdg4y5r3zarvaryvaxxpcs")
     assert "512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798" == script_hex_from_addr(
-        "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0")
+        "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0"
+    )
 
     # base58 p2pkh
     assert "76a91428662c67561b95c79d2257d2a93d9d151c977e9188ac" == script_hex_from_addr(
-        "14gcRovpkCoGkCNBivQBvw7eso7eiNAbxG")
+        "14gcRovpkCoGkCNBivQBvw7eso7eiNAbxG"
+    )
     assert "76a914704f4b81cadb7bf7e68c08cd3657220f680f863c88ac" == script_hex_from_addr(
-        "1BEqfzh4Y3zzLosfGhw1AsqbEKVW6e1qHv")
+        "1BEqfzh4Y3zzLosfGhw1AsqbEKVW6e1qHv"
+    )
 
     # base58 p2sh
-    assert "a9142a84cf00d47f699ee7bbc1dea5ec1bdecb4ac15487" == script_hex_from_addr("35ZqQJcBQMZ1rsv8aSuJ2wkC7ohUCQMJbT")
-    assert "a914f47c8954e421031ad04ecd8e7752c9479206b9d387" == script_hex_from_addr("3PyjzJ3im7f7bcV724GR57edKDqoZvH7Ji")
+    assert "a9142a84cf00d47f699ee7bbc1dea5ec1bdecb4ac15487" == script_hex_from_addr(
+        "35ZqQJcBQMZ1rsv8aSuJ2wkC7ohUCQMJbT"
+    )
+    assert "a914f47c8954e421031ad04ecd8e7752c9479206b9d387" == script_hex_from_addr(
+        "3PyjzJ3im7f7bcV724GR57edKDqoZvH7Ji"
+    )
