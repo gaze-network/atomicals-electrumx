@@ -1003,6 +1003,8 @@ class HttpUnifiedAPIHandler(object):
 
     @error_handler
     async def get_arc20_token_list(self, request: "Request") -> "Response":
+        block_height = self.session_mgr.db.db_height
+
         infos = []
         atomical_ids = await self.session_mgr.db.get_atomicals_list(10,0,asc=True)
         for atomical_id in atomical_ids:
@@ -1061,16 +1063,6 @@ class HttpUnifiedAPIHandler(object):
             deployed_at_height = commit_tx_height
             deployed_at = self._block_height_to_unix_timestamp(deployed_at_height)
             deploy_tx_hash = commit_tx_id
-
-            # change time-sensitive data from block_height
-            if block_height != latest_block_height:
-                # support only atomical FT
-                data = await self._get_arc20_holders_by_block_height(atomical_id, block_height)
-                holder_count = data["count"]
-                circulating_supply = data["total"]
-                if subtype == "decentralized":
-                    mint_count = await self.session_mgr.db.get_atomical_mint_count_at_height(atomical_id, block_height)
-                    minted_amount = mint_count * mint_amount
 
             # mint completion data
             completed_at_height = None
