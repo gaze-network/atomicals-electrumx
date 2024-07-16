@@ -1004,7 +1004,7 @@ class HttpUnifiedAPIHandler(object):
     @error_handler
     async def get_arc20_token_list(self, request: "Request") -> "Response":
         infos = []
-        atomical_ids = await self.session_mgr.db.get_atomicals_list(10,0,asc=true)
+        atomical_ids = await self.session_mgr.db.get_atomicals_list(10,0,asc=True)
         for atomical_id in atomical_ids:
             # get data
             atomical: dict = await self._get_atomical(atomical_id)
