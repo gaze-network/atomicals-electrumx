@@ -742,7 +742,7 @@ class HttpUnifiedAPIHandler(object):
         if not hash:
             return format_response(None, 400, "Hash is required.")
 
-        tx = await self._get_tx_detail(tx_hash)
+        tx = await self._get_tx_detail(tx_hash, None, None)
         if not tx:
             return format_response(None, 404, "transaction not found.")
 
