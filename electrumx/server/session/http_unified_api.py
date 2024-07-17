@@ -738,7 +738,7 @@ class HttpUnifiedAPIHandler(object):
 
     @error_handler
     async def get_arc20_transaction_by_hash(self, request: "Request") -> "Response":
-        hash = request.match_info.get("hash", "")
+        tx_hash = request.match_info.get("hash", "")
         if not hash:
             return format_response(None, 400, "Hash is required.")
 
