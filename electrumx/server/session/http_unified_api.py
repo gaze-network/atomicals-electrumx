@@ -1165,7 +1165,7 @@ class HttpUnifiedAPIHandler(object):
                     if atomical_id_value:
                         init_mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id_value, True)
                         if bool(init_mint_info) and init_mint_info["type"] == "FT":
-                            if offset >= current:
+                            if current >= offset:
                                 atomical_ids.append(atomical_id_value)
                                 total += 1
                             current += 1
@@ -1180,7 +1180,7 @@ class HttpUnifiedAPIHandler(object):
                     if atomical_id_value:
                         init_mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id_value, True)
                         if bool(init_mint_info) and init_mint_info["type"] == "FT":
-                            if offset >= current:
+                            if current >= offset:
                                 atomical_ids.append(atomical_id_value)
                                 total += 1
                             current += 1
