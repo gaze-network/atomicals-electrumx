@@ -1144,11 +1144,6 @@ class HttpUnifiedAPIHandler(object):
             atomical_ids = []
             # If no offset provided, then assume we want to start from the highest one
             search_starting_at_atomical_number = atomical_number_tip
-            if offset >= 0:
-                search_starting_at_atomical_number = offset
-            elif offset < 0:
-                # if offset is negative, then we assume it is subtracted from the latest number
-                search_starting_at_atomical_number = atomical_number_tip + offset  # adding a minus
             # safety checking for less than 0
             if search_starting_at_atomical_number < 0:
                 search_starting_at_atomical_number = 0
