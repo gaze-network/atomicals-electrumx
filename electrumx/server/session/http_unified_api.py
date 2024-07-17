@@ -1176,7 +1176,7 @@ class HttpUnifiedAPIHandler(object):
                     atomical_id_value = self.session_mgr.db.utxo_db.get(current_key)
                     if atomical_id_value:
                         init_mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id_value, True)
-                        if bool(init_mint_info) && init_mint_info["type"] == "FT":
+                        if bool(init_mint_info) and init_mint_info["type"] == "FT":
                             atomical_ids.append(atomical_id_value)
                             x += 1
                     else:
