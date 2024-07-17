@@ -1149,24 +1149,27 @@ class HttpUnifiedAPIHandler(object):
             elif offset < 0:
                 # if offset is negative, then we assume it is subtracted from the latest number
                 search_starting_at_atomical_number = atomical_number_tip + offset  # adding a minus
-
             # safety checking for less than 0
             if search_starting_at_atomical_number < 0:
                 search_starting_at_atomical_number = 0
 
             # Generate up to limit number of keys to search
             list_of_keys = []
-            x = 0
             i = 0
-            while x < limit:
+            current = 0
+            total = 0
+            while total < limit:
                 if asc:
                     current_key = b"n" + pack_be_uint64(search_starting_at_atomical_number + i)
                     atomical_id_value = self.session_mgr.db.utxo_db.get(current_key)
                     if atomical_id_value:
                         init_mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id_value, True)
                         if bool(init_mint_info) and init_mint_info["type"] == "FT":
-                            atomical_ids.append(atomical_id_value)
-                            x += 1
+                            if offset >= current:
+                                atomical_ids.append(atomical_id_value)
+                                total += 1
+                            current += 1
+
                     else:
                         break
                 else:
@@ -1177,8 +1180,10 @@ class HttpUnifiedAPIHandler(object):
                     if atomical_id_value:
                         init_mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id_value, True)
                         if bool(init_mint_info) and init_mint_info["type"] == "FT":
-                            atomical_ids.append(atomical_id_value)
-                            x += 1
+                            if offset >= current:
+                                atomical_ids.append(atomical_id_value)
+                                total += 1
+                            current += 1
                     else:
                         break
                 i += 1
