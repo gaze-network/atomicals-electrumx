@@ -1142,12 +1142,7 @@ class HttpUnifiedAPIHandler(object):
 
         def read_atomical_list():
             atomical_ids = []
-            # If no offset provided, then assume we want to start from the highest one
-            search_starting_at_atomical_number = atomical_number_tip
-            # safety checking for less than 0
-            if search_starting_at_atomical_number < 0:
-                search_starting_at_atomical_number = 0
-
+            search_starting_at_atomical_number = 0
             # Generate up to limit number of keys to search
             list_of_keys = []
             i = 0
@@ -1168,6 +1163,7 @@ class HttpUnifiedAPIHandler(object):
                     else:
                         break
                 else:
+                    # not supported yet
                     if search_starting_at_atomical_number - i < 0:
                         break
                     current_key = b"n" + pack_be_uint64(search_starting_at_atomical_number - i)
