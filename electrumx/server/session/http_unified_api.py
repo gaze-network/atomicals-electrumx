@@ -1136,8 +1136,8 @@ class HttpUnifiedAPIHandler(object):
         })
     async def _get_atomicals_ft_list(self, limit, offset, asc=True) -> list:
         # atomical_ids = await self.session_mgr.db.get_atomicals_list(limit, offset, asc)
-        if limit > 100:
-            limit = 100
+        if limit > 50:
+            limit = 50
         atomical_number_tip = self.session_mgr.db.db_atomical_count
 
         def read_atomical_list():
@@ -1157,36 +1157,33 @@ class HttpUnifiedAPIHandler(object):
             # Generate up to limit number of keys to search
             list_of_keys = []
             x = 0
+            i = 0
             while x < limit:
                 if asc:
-                    current_key = b"n" + pack_be_uint64(search_starting_at_atomical_number + x)
+                    current_key = b"n" + pack_be_uint64(search_starting_at_atomical_number + i)
                     atomical_id_value = self.session_mgr.db.utxo_db.get(current_key)
                     if atomical_id_value:
                         init_mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id_value, True)
-                        if not init_mint_info:
-                            continue
-                        if init_mint_info["type"] != "FT":
-                            continue
-                        atomical_ids.append(atomical_id_value)
-                        x += 1
+                        if bool(init_mint_info) && init_mint_info["type"] == "FT":
+                            atomical_ids.append(atomical_id_value)
+                            x += 1
                     else:
                         break
                 else:
-                    if search_starting_at_atomical_number - x < 0:
+                    if search_starting_at_atomical_number - i < 0:
                         break
-                    current_key = b"n" + pack_be_uint64(search_starting_at_atomical_number - x)
+                    current_key = b"n" + pack_be_uint64(search_starting_at_atomical_number - i)
                     atomical_id_value = self.session_mgr.db.utxo_db.get(current_key)
                     if atomical_id_value:
                         init_mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id_value, True)
-                        if not init_mint_info:
-                            continue
-                        if init_mint_info["type"] != "FT":
-                            continue
-                        atomical_ids.append(atomical_id_value)
-                        x += 1
+                        if bool(init_mint_info) && init_mint_info["type"] == "FT":
+                            atomical_ids.append(atomical_id_value)
+                            x += 1
                     else:
                         break
+                i += 1
             return atomical_ids
+
         return await run_in_thread(read_atomical_list)
 
     async def _utxo_to_formatted(self, utxo: UTXO) -> "dict":
