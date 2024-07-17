@@ -1135,7 +1135,7 @@ class HttpUnifiedAPIHandler(object):
             "list": infos,
         })
     async def _get_atomicals_ft_list(self, limit, offset, asc=True) -> list:
-        atomical_ids = await self.session_mgr.db.get_atomicals_list(limit, offset, asc)
+        # atomical_ids = await self.session_mgr.db.get_atomicals_list(limit, offset, asc)
         if limit > 100:
             limit = 100
         atomical_number_tip = self.session_mgr.db.db_atomical_count
@@ -1160,7 +1160,7 @@ class HttpUnifiedAPIHandler(object):
             while x < limit:
                 if asc:
                     current_key = b"n" + pack_be_uint64(search_starting_at_atomical_number + x)
-                    atomical_id_value = self.utxo_db.get(current_key)
+                    atomical_id_value = self.session_mgr.db.utxo_db.get(current_key)
                     if atomical_id_value:
                         init_mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id_value, True)
                         if not init_mint_info:
@@ -1175,7 +1175,7 @@ class HttpUnifiedAPIHandler(object):
                     if search_starting_at_atomical_number - x < 0:
                         break
                     current_key = b"n" + pack_be_uint64(search_starting_at_atomical_number - x)
-                    atomical_id_value = self.utxo_db.get(current_key)
+                    atomical_id_value = self.session_mgr.db.utxo_db.get(current_key)
                     if atomical_id_value:
                         init_mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id_value, True)
                         if not init_mint_info:
