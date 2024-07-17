@@ -28,6 +28,9 @@ from electrumx.lib.util_atomicals import (
 )
 from electrumx.server.db import UTXO, AtomicalUTXO
 from electrumx.server.history import TXNUM_LEN
+from electrumx.lib.util import (
+    pack_be_uint64,
+)
 
 if TYPE_CHECKING:
     from aiohttp.web import Request, Response
