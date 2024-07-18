@@ -1135,7 +1135,7 @@ class HttpUnifiedAPIHandler(object):
             "list": infos,
         })
     async def _get_atomicals_ft_list(self, limit, offset, asc=True) -> list:
-        # atomical_ids = await self.session_mgr.db.get_atomicals_list(limit, offset, asc)
+        # ref logic from self.session_mgr.db.get_atomicals_list(limit, offset, asc)
         if limit > 1000:
             limit = 1000
         atomical_number_tip = self.session_mgr.db.db_atomical_count
