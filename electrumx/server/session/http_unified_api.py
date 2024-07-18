@@ -1164,19 +1164,7 @@ class HttpUnifiedAPIHandler(object):
                         break
                 else:
                     # not supported yet
-                    if search_starting_at_atomical_number - i < 0:
-                        break
-                    current_key = b"n" + pack_be_uint64(search_starting_at_atomical_number - i)
-                    atomical_id_value = self.session_mgr.db.utxo_db.get(current_key)
-                    if atomical_id_value:
-                        init_mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id_value, True)
-                        if bool(init_mint_info) and init_mint_info["type"] == "FT":
-                            if current >= offset:
-                                atomical_ids.append(atomical_id_value)
-                                total += 1
-                            current += 1
-                    else:
-                        break
+                    raise Exception("not supported yet")
                 i += 1
             return atomical_ids
 
