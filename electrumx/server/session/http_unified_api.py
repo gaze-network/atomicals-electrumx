@@ -20,6 +20,7 @@ from electrumx.lib.script2addr import (
     get_address_from_output_script,
     get_script_from_address,
 )
+from electrumx.lib.util import pack_be_uint64
 from electrumx.lib.util_atomicals import (
     DFT_MINT_MAX_MAX_COUNT_DENSITY,
     compact_to_location_id_bytes,
@@ -28,9 +29,6 @@ from electrumx.lib.util_atomicals import (
 )
 from electrumx.server.db import UTXO, AtomicalUTXO
 from electrumx.server.history import TXNUM_LEN
-from electrumx.lib.util import (
-    pack_be_uint64,
-)
 
 if TYPE_CHECKING:
     from aiohttp.web import Request, Response
@@ -1015,9 +1013,8 @@ class HttpUnifiedAPIHandler(object):
             MAX_LIMIT.get_arc20_token_list,
         )
 
-
         infos = []
-        atomical_ids = await self._get_atomicals_ft_list(limit,offset,asc=True)
+        atomical_ids = await self._get_atomicals_ft_list(limit, offset, asc=True)
         block_height = self.session_mgr.db.db_height
         for atomical_id in atomical_ids:
             # get data
@@ -1094,46 +1091,53 @@ class HttpUnifiedAPIHandler(object):
 
             compact_atomical_id = location_id_bytes_to_compact(atomical_id)
 
-            infos.append({
-                "id": compact_atomical_id,
-                "name": ticker,
-                "symbol": ticker,
-                "totalSupply": str(max_supply),
-                "circulatingSupply": str(circulating_supply),
-                "mintedAmount": str(minted_amount),
-                "burnedAmount": str(minted_amount - circulating_supply),
-                "decimals": get_decimals(),
-                "deployedAt": deployed_at,
-                "deployedAtHeight": deployed_at_height,
-                "deployTxHash": deploy_tx_hash,
-                "completedAt": completed_at,
-                "completedAtHeight": completed_at_height,
-                "holdersCount": holder_count,
-                # arc20-specific data
-                "extend": {
-                    "atomicalId": compact_atomical_id,
-                    "atomicalNumber": atomical.get("atomical_number", 0),
-                    "atomicalRef": atomical.get("atomical_ref", ""),
-                    "amountPerMint": str(mint_amount),
-                    "maxMints": str(atomical.get("$max_mints", 0)),  # number of times this token can be minted
-                    "deployedBy": deployer_address,
-                    "mintHeight": atomical.get("$mint_height", 0),  # the block height this FT can start to be minted
-                    "mintInfo": {
-                        "commitTxHash": commit_tx_id,
-                        # commit tx output index of utxo used in reveal tx
-                        "commitIndex": mint_info.get("commit_index"),
-                        "revealTxHash": mint_info.get("reveal_location_txid"),
-                        "revealIndex": mint_info.get("reveal_location_index"),
-                        "args": mint_info_args,  # raw atomicals operation payload
-                        "metadata": mint_info.get("meta", {}),  # metadata.json used during deployment
+            infos.append(
+                {
+                    "id": compact_atomical_id,
+                    "name": ticker,
+                    "symbol": ticker,
+                    "totalSupply": str(max_supply),
+                    "circulatingSupply": str(circulating_supply),
+                    "mintedAmount": str(minted_amount),
+                    "burnedAmount": str(minted_amount - circulating_supply),
+                    "decimals": get_decimals(),
+                    "deployedAt": deployed_at,
+                    "deployedAtHeight": deployed_at_height,
+                    "deployTxHash": deploy_tx_hash,
+                    "completedAt": completed_at,
+                    "completedAtHeight": completed_at_height,
+                    "holdersCount": holder_count,
+                    # arc20-specific data
+                    "extend": {
+                        "atomicalId": compact_atomical_id,
+                        "atomicalNumber": atomical.get("atomical_number", 0),
+                        "atomicalRef": atomical.get("atomical_ref", ""),
+                        "amountPerMint": str(mint_amount),
+                        "maxMints": str(atomical.get("$max_mints", 0)),  # number of times this token can be minted
+                        "deployedBy": deployer_address,
+                        "mintHeight": atomical.get(
+                            "$mint_height", 0
+                        ),  # the block height this FT can start to be minted
+                        "mintInfo": {
+                            "commitTxHash": commit_tx_id,
+                            # commit tx output index of utxo used in reveal tx
+                            "commitIndex": mint_info.get("commit_index"),
+                            "revealTxHash": mint_info.get("reveal_location_txid"),
+                            "revealIndex": mint_info.get("reveal_location_index"),
+                            "args": mint_info_args,  # raw atomicals operation payload
+                            "metadata": mint_info.get("meta", {}),  # metadata.json used during deployment
+                        },
+                        "subtype": subtype,
+                        "mintMode": mint_mode,
                     },
-                    "subtype": subtype,
-                    "mintMode": mint_mode,
-                },
-            })
-        return format_response({
-            "list": infos,
-        })
+                }
+            )
+        return format_response(
+            {
+                "list": infos,
+            }
+        )
+
     async def _get_atomicals_ft_list(self, limit, offset, asc=True) -> list:
         # ref logic from self.session_mgr.db.get_atomicals_list(limit, offset, asc)
         if limit > 1000:
