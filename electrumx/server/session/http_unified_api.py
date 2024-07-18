@@ -20,6 +20,7 @@ from electrumx.lib.script2addr import (
     get_address_from_output_script,
     get_script_from_address,
 )
+from electrumx.lib.util import pack_be_uint64
 from electrumx.lib.util_atomicals import (
     DFT_MINT_MAX_MAX_COUNT_DENSITY,
     compact_to_location_id_bytes,
@@ -45,6 +46,7 @@ class MAX_LIMIT:
     get_arc20_transactions = 3000
     get_arc20_holders = 1000
     get_arc20_utxos = 3000  # large limit since pagination does not help performance
+    get_arc20_token_list = 1000
 
 
 class DEFAULT_LIMIT:
@@ -52,6 +54,7 @@ class DEFAULT_LIMIT:
     get_arc20_transactions = 100
     get_arc20_holders = 100
     get_arc20_utxos = 100
+    get_arc20_token_list = 100
 
 
 class JSONBytesEncoder(json.JSONEncoder):
@@ -136,6 +139,7 @@ class HttpUnifiedAPIHandler(object):
         router.add_get("/v2/arc20/holders/{id}", self.get_arc20_holders)
         router.add_get("/v2/arc20/info/{id}", self.get_arc20_token)
         router.add_get("/v2/arc20/utxos/wallet/{wallet}", self.get_arc20_utxos)
+        router.add_get("/v2/arc20/tokens", self.get_arc20_token_list)
 
     def _resolve_ticker_to_atomical_id(self, ticker: str) -> bytes | None:
         bp = self.session_mgr.bp
@@ -999,6 +1003,176 @@ class HttpUnifiedAPIHandler(object):
                 },
             }
         )
+
+    @error_handler
+    async def get_arc20_token_list(self, request: "Request") -> "Response":
+        limit, offset = self._parse_limit_offset(
+            request.query.get("limit"),
+            request.query.get("offset"),
+            DEFAULT_LIMIT.get_arc20_token_list,
+            MAX_LIMIT.get_arc20_token_list,
+        )
+
+        infos = []
+        atomical_ids = await self._get_atomicals_ft_list(limit, offset, asc=True)
+        block_height = self.session_mgr.db.db_height
+        for atomical_id in atomical_ids:
+            # get data
+            atomical: dict = await self._get_atomical(atomical_id)
+
+            atomical_type = atomical.get("type", "")
+            if atomical_type == "NFT":
+                continue
+
+            subtype = atomical.get("subtype", "")
+            mint_mode = atomical.get("$mint_mode", "")
+            mint_info: dict = atomical.get("mint_info", {})
+            mint_info_args: dict = mint_info.get("args", {})
+            ticker = atomical.get("$ticker", "")
+
+            mint_count = 0
+            minted_amount = 0
+            max_supply = 0
+            mint_amount = 0  # mint size
+
+            if atomical_type == "FT":
+                if mint_mode == "fixed":
+                    max_supply = atomical.get("$max_supply", 0)
+                    mint_amount = mint_info_args.get("mint_amount", 0)
+                else:
+                    max_supply = atomical.get("$max_supply", -1)
+            # NOTE: unsupported
+            # elif atomical_type == "NFT":
+            else:
+                raise Exception("unreachable code: invalid atomical type")
+
+            if subtype == "decentralized":
+                atomical: dict = await self.session_mgr.bp.get_dft_mint_info_rpc_format_by_atomical_id(atomical_id)
+                mint_count = atomical["dft_info"]["mint_count"]
+                minted_amount = mint_count * mint_amount  # total minted
+            elif subtype == "direct":
+                atomical: dict = await self.session_mgr.bp.get_ft_mint_info_rpc_format_by_atomical_id(atomical_id)
+                minted_amount = max_supply  # entire mint in direct mint
+            else:
+                raise Exception("unreachable code: invalid subtype")
+
+            location_summary: dict = atomical.get("location_summary", {})
+            holder_count = location_summary.get("unique_holders", 0)
+            circulating_supply = location_summary.get("circulating_supply", 0)
+
+            # deployment data
+            commit_tx_id = mint_info.get("commit_txid")
+            commit_tx_height = mint_info.get("commit_height")
+
+            reveal_location_script: str = mint_info.get("reveal_location_script")
+            deployer_address = get_address_from_output_script(bytes.fromhex(reveal_location_script))
+            if not deployer_address:
+                deployer_address = ""
+
+            deployed_at_height = commit_tx_height
+            deployed_at = self._block_height_to_unix_timestamp(deployed_at_height)
+            deploy_tx_hash = commit_tx_id
+
+            # mint completion data
+            completed_at_height = None
+            completed_at = None  # unix timestamp
+            if minted_amount == max_supply:
+                if subtype == "direct":
+                    completed_at_height = deployed_at_height
+                    completed_at = deployed_at
+                else:
+                    completed_at_height = self.session_mgr.db.get_mint_completed_at_height(atomical_id)
+                    if completed_at_height:
+                        completed_at = self._block_height_to_unix_timestamp(completed_at_height)
+            # clear historical data
+            if completed_at_height and completed_at_height > block_height:
+                completed_at_height = None
+                completed_at = None
+
+            compact_atomical_id = location_id_bytes_to_compact(atomical_id)
+
+            infos.append(
+                {
+                    "id": compact_atomical_id,
+                    "name": ticker,
+                    "symbol": ticker,
+                    "totalSupply": str(max_supply),
+                    "circulatingSupply": str(circulating_supply),
+                    "mintedAmount": str(minted_amount),
+                    "burnedAmount": str(minted_amount - circulating_supply),
+                    "decimals": get_decimals(),
+                    "deployedAt": deployed_at,
+                    "deployedAtHeight": deployed_at_height,
+                    "deployTxHash": deploy_tx_hash,
+                    "completedAt": completed_at,
+                    "completedAtHeight": completed_at_height,
+                    "holdersCount": holder_count,
+                    # arc20-specific data
+                    "extend": {
+                        "atomicalId": compact_atomical_id,
+                        "atomicalNumber": atomical.get("atomical_number", 0),
+                        "atomicalRef": atomical.get("atomical_ref", ""),
+                        "amountPerMint": str(mint_amount),
+                        "maxMints": str(atomical.get("$max_mints", 0)),  # number of times this token can be minted
+                        "deployedBy": deployer_address,
+                        "mintHeight": atomical.get(
+                            "$mint_height", 0
+                        ),  # the block height this FT can start to be minted
+                        "mintInfo": {
+                            "commitTxHash": commit_tx_id,
+                            # commit tx output index of utxo used in reveal tx
+                            "commitIndex": mint_info.get("commit_index"),
+                            "revealTxHash": mint_info.get("reveal_location_txid"),
+                            "revealIndex": mint_info.get("reveal_location_index"),
+                            "args": mint_info_args,  # raw atomicals operation payload
+                            "metadata": mint_info.get("meta", {}),  # metadata.json used during deployment
+                        },
+                        "subtype": subtype,
+                        "mintMode": mint_mode,
+                    },
+                }
+            )
+        return format_response(
+            {
+                "list": infos,
+            }
+        )
+
+    async def _get_atomicals_ft_list(self, limit, offset, asc=True) -> list:
+        # ref logic from self.session_mgr.db.get_atomicals_list(limit, offset, asc)
+        if limit > 1000:
+            limit = 1000
+        atomical_number_tip = self.session_mgr.db.db_atomical_count
+
+        def read_atomical_list():
+            atomical_ids = []
+            search_starting_at_atomical_number = 0
+            # Generate up to limit number of keys to search
+            list_of_keys = []
+            i = 0
+            current = 0
+            total = 0
+            while total < limit:
+                if asc:
+                    current_key = b"n" + pack_be_uint64(search_starting_at_atomical_number + i)
+                    atomical_id_value = self.session_mgr.db.utxo_db.get(current_key)
+                    if atomical_id_value:
+                        init_mint_info = self.session_mgr.bp.get_atomicals_id_mint_info(atomical_id_value, True)
+                        if bool(init_mint_info) and init_mint_info["type"] == "FT":
+                            if current >= offset:
+                                atomical_ids.append(atomical_id_value)
+                                total += 1
+                            current += 1
+
+                    else:
+                        break
+                else:
+                    # not supported yet
+                    raise Exception("not supported yet")
+                i += 1
+            return atomical_ids
+
+        return await run_in_thread(read_atomical_list)
 
     async def _utxo_to_formatted(self, utxo: UTXO) -> "dict":
         # TODO: use data from AtomicalUTXO only when it has atomical_id in it
