@@ -136,6 +136,7 @@ class HttpUnifiedAPIHandler(object):
         router.add_get("/v2/arc20/holders/{id}", self.get_arc20_holders)
         router.add_get("/v2/arc20/info/{id}", self.get_arc20_token)
         router.add_get("/v2/arc20/utxos/wallet/{wallet}", self.get_arc20_utxos)
+        router.add_get("/v2/arc20/transactions/hash/{hash}", self.get_arc20_transaction_by_hash)
 
     def _resolve_ticker_to_atomical_id(self, ticker: str) -> bytes | None:
         bp = self.session_mgr.bp
@@ -734,6 +735,18 @@ class HttpUnifiedAPIHandler(object):
                 "list": txs,
             }
         )
+
+    @error_handler
+    async def get_arc20_transaction_by_hash(self, request: "Request") -> "Response":
+        tx_hash = request.match_info.get("hash", "")
+        if not hash:
+            return format_response(None, 400, "Hash is required.")
+
+        tx = await self._get_tx_detail(tx_hash, None, None)
+        if not tx:
+            return format_response(None, 404, "transaction not found.")
+
+        return format_response(tx)
 
     async def _get_arc20_holders_by_block_height(self, atomical_id: bytes, block_height: int) -> dict:
         utxos = await self.session_mgr.db.get_atomical_utxos_at_height_by_atomical_id(atomical_id, block_height)
