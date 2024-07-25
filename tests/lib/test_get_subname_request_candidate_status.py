@@ -101,7 +101,7 @@ def test_get_subname_request_candidate_status_verified_claimed_by_other():
                 "payment_type": "mint_initiated",
                 "applicable_rule": None,
             }
-        ]
+        ],
         # 'applicable_rule': {
         #     "o": {
         #       "0123456789": {
@@ -158,7 +158,7 @@ def test_get_subname_request_candidate_status_verified_pending_candidate():
                 "payment_type": "mint_initiated",
                 "applicable_rule": None,
             }
-        ]
+        ],
         # 'applicable_rule': {
         #     "o": {
         #       "0123456789": {
@@ -224,7 +224,7 @@ def test_get_subname_request_candidate_status_pending_awaiting_confirmations():
                 "payment_type": "mint_initiated",
                 "applicable_rule": None,
             },
-        ]
+        ],
         # 'applicable_rule': {
         #     "o": {
         #       "0123456789": {

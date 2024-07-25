@@ -248,6 +248,11 @@ class Coin(CoinHeaderHashMixin, CoinShortNameMixin):
         return header[4:36]
 
     @classmethod
+    def header_timestamp(cls, header):
+        """Given a header return timestamp"""
+        return struct.unpack("<I", header[68:72])[0]
+
+    @classmethod
     def static_header_offset(cls, height):
         """Given a header height return its offset in the headers file.
 
@@ -464,7 +469,7 @@ class NameMixin:
         data_placeholders = 0
 
         for opcode in opcodes:
-            if type(opcode) == tuple:
+            if type(opcode) is tuple:
                 data_placeholders += 1
             else:
                 break
